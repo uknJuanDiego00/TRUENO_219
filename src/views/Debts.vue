@@ -5,6 +5,12 @@
         <h1 class="page-title"><Wallet :size="24" /> Deudas</h1>
         <p class="page-subtitle">Gestión de créditos y cobros pendientes, agrupados por cliente</p>
       </div>
+      <div>
+        <button class="btn btn-secondary" :disabled="isRefreshing" @click="refreshData" title="Recargar deudas desde MongoDB Atlas">
+          <RefreshCw :size="16" :class="{ 'spin-anim': isRefreshing }" />
+          <span>{{ isRefreshing ? 'Sincronizando...' : 'Recargar' }}</span>
+        </button>
+      </div>
     </div>
 
     <!-- Summary Cards -->
@@ -35,7 +41,7 @@
     <div class="filter-row">
       <div class="search-bar">
         <Search :size="16" class="search-icon" />
-        <input v-model="searchQuery" placeholder="Buscar por cliente o ID..." />
+        <input v-model="searchQuery" placeholder="Buscar por cliente, cédula o documento..." />
       </div>
       <select class="form-control filter-select" v-model="filterStatus">
         <option value="">Todos los estados</option>
@@ -61,6 +67,7 @@
             <div>
               <div class="debt-client-name">
                 {{ group.clientName }}
+                <span v-if="group.clientDocument" class="client-doc-tag">CC: {{ group.clientDocument }}</span>
                 <span v-if="group.clientId" class="client-id-tag">ID: {{ group.clientId }}</span>
               </div>
               <div class="text-muted debt-meta">
@@ -196,6 +203,7 @@
                 <div class="fw-bold" style="font-size:15px">{{ paymentModal.group?.clientName }}</div>
                 <div class="text-muted" style="font-size:12px">
                   {{ paymentModal.group?.debts?.length }} venta{{ paymentModal.group?.debts?.length === 1 ? '' : 's' }} a crédito
+                  <span v-if="paymentModal.group?.clientDocument"> · CC: {{ paymentModal.group?.clientDocument }}</span>
                   <span v-if="paymentModal.group?.clientId"> · ID: {{ paymentModal.group?.clientId }}</span>
                 </div>
               </div>
@@ -286,13 +294,30 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import store from '../stores/store.js'
 import { formatCurrency, formatDate, formatDateShort, getDebtStatus } from '../utils/calculations.js'
 import {
   Wallet, ClipboardList, AlertOctagon, BadgeDollarSign, Search, Calendar,
   AlertTriangle, CheckCircle2, CreditCard, X, Users, ChevronDown, ChevronRight, Trash2, Minus, Plus
 } from '@lucide/vue'
+
+const isRefreshing = ref(false)
+
+async function refreshData() {
+  try {
+    isRefreshing.value = true
+    await Promise.allSettled([store.loadDebts(), store.loadClients()])
+  } catch (err) {
+    console.error('Error sincronizando deudas:', err)
+  } finally {
+    isRefreshing.value = false
+  }
+}
+
+onMounted(async () => {
+  await refreshData()
+})
 
 const searchQuery = ref('')
 const filterStatus = ref('')
@@ -313,14 +338,28 @@ const groupedDebts = computed(() => {
   const map = new Map()
 
   for (const d of store.debts) {
-    const clientKey = d.clientId ?? d.clientDocument ?? null
+    let doc = (d.clientDocument || '').trim()
+    if (!doc && (d.clientId || d.clientRef)) {
+      const foundClient = store.clients.find(c =>
+        c.id === d.clientId ||
+        c._id === d.clientId ||
+        c._id === d.clientRef ||
+        c.originalId === d.clientId
+      )
+      if (foundClient?.document) {
+        doc = String(foundClient.document).trim()
+      }
+    }
+
+    const clientKey = d.clientId ?? (doc || null)
     const key = clientKey !== null ? `id-${clientKey}` : `name-${d.clientName || 'Sin Cliente'}`
 
     if (!map.has(key)) {
       map.set(key, {
         key,
         clientId: clientKey,
-        clientName: d.clientName || 'Cliente General',
+        clientDocument: doc,
+        clientName: foundClient?.name || d.clientName || 'Cliente General',
         debts: [],
         total: 0,
         paid: 0,
@@ -332,6 +371,7 @@ const groupedDebts = computed(() => {
     }
 
     const group = map.get(key)
+    if (!group.clientDocument && doc) group.clientDocument = doc
     group.debts.push(d)
     group.total += Number(d.total) || 0
     group.paid += Number(d.paid) || 0
@@ -356,11 +396,26 @@ const clientsWithDebtCount = computed(() => groupedDebts.value.filter(g => !g.al
 const overdueGroupsCount = computed(() => groupedDebts.value.filter(g => g.hasOverdue).length)
 
 const filteredGroups = computed(() => {
-  const q = searchQuery.value.toLowerCase()
+  const rawQ = searchQuery.value.trim()
+  const q = rawQ.toLowerCase()
+  const cleanQ = rawQ.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
   return groupedDebts.value.filter(g => {
-    const matchSearch = !q
-      || g.clientName.toLowerCase().includes(q)
-      || (g.clientId && String(g.clientId).toLowerCase().includes(q))
+    const matchName = g.clientName && g.clientName.toLowerCase().includes(q)
+    const matchId = g.clientId && String(g.clientId).toLowerCase().includes(q)
+    const gDoc = (g.clientDocument || '').toLowerCase()
+    const cleanGDoc = gDoc.replace(/[^a-zA-Z0-9]/g, '')
+    const matchDoc = (gDoc && gDoc.includes(q)) || (cleanQ && cleanGDoc && cleanGDoc.includes(cleanQ))
+    const matchDebts = g.debts.some(d => {
+      const dDoc = (d.clientDocument || '').toLowerCase()
+      const cleanDDoc = dDoc.replace(/[^a-zA-Z0-9]/g, '')
+      const matchDDoc = (dDoc && dDoc.includes(q)) || (cleanQ && cleanDDoc && cleanDDoc.includes(cleanQ))
+      const matchDId = d.id && String(d.id).toLowerCase().includes(q)
+      const matchSaleId = d.saleId && String(d.saleId).toLowerCase().includes(q)
+      return matchDDoc || matchDId || matchSaleId
+    })
+    const matchSearch = !rawQ || matchName || matchId || matchDoc || matchDebts
+
+
     let matchStatus = true
     if (filterStatus.value === 'vencida') matchStatus = g.hasOverdue
     else if (filterStatus.value === 'pendiente') matchStatus = !g.allPaid
@@ -423,7 +478,7 @@ function setQuickAmount(pct) {
 
 // El abono se reparte entre las ventas pendientes del cliente,
 // empezando por la que vence mas pronto, hasta agotar el monto ingresado.
-function submitPayment() {
+async function submitPayment() {
   paymentModal.amountError = ''
   const amt = Number(paymentModal.amount) || 0
 
@@ -440,16 +495,20 @@ function submitPayment() {
     .filter(d => d.status !== 'pagada' && (Number(d.balance) || 0) > 0)
 
   let remaining = amt
-  for (const debt of pendingDebtsOfClient) {
-    if (remaining <= 0) break
-    const toApply = Math.min(remaining, Number(debt.balance) || 0)
-    if (toApply > 0) {
-      store.addPayment(debt.id, toApply, paymentModal.note.trim())
-      remaining -= toApply
+  try {
+    for (const debt of pendingDebtsOfClient) {
+      if (remaining <= 0) break
+      const toApply = Math.min(remaining, Number(debt.balance) || 0)
+      if (toApply > 0) {
+        await store.addPayment(debt.id, toApply, paymentModal.note.trim())
+        remaining -= toApply
+      }
     }
+    await refreshData()
+    closePaymentModal()
+  } catch (err) {
+    paymentModal.amountError = err.message || 'Error al guardar abono en el servidor'
   }
-
-  closePaymentModal()
 }
 
 function removeDebtItem(debt, itemIndex) {
@@ -577,6 +636,7 @@ function incrementDebtItem(debt, itemIndex) {
   padding: 2px 8px;
   border-radius: var(--radius-sm);
 }
+.client-doc-tag { font-size: 11px; font-weight: 700; color: var(--accent); background: rgba(255, 107, 0, 0.1); border: 1px solid rgba(255, 107, 0, 0.25); padding: 2px 8px; border-radius: var(--radius-sm); }
 .debt-meta { font-size: 12px; }
 
 .debt-amounts {
@@ -847,3 +907,11 @@ function incrementDebtItem(debt, itemIndex) {
   .quick-amounts { gap: 6px; }
 }
 </style>
+
+.spin-anim {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

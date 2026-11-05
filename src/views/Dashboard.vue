@@ -253,7 +253,7 @@ async function buildChart() {
   })
 }
 
-onMounted(() => buildChart())
+onMounted(async () => { await store.loadAll(true); buildChart(); })
 watch([chartMode, () => store.sales.length], () => buildChart(), { flush: 'post' })
 onUnmounted(() => {
   if (chartInstance) {

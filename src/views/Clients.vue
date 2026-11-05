@@ -5,7 +5,13 @@
         <h1 class="page-title"><Users :size="24" /> Clientes</h1>
         <p class="page-subtitle">{{ formatNumber(store.clients.length) }} clientes registrados</p>
       </div>
-      <button class="btn btn-primary" @click="openAddModal"><Plus :size="16" /> Nuevo Cliente</button>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-secondary" :disabled="isRefreshing" @click="refreshData" title="Recargar datos directamente desde MongoDB Atlas">
+          <RefreshCw :size="16" :class="{ 'spin-anim': isRefreshing }" />
+          <span>{{ isRefreshing ? 'Sincronizando...' : 'Recargar' }}</span>
+        </button>
+        <button class="btn btn-primary" @click="openAddModal"><Plus :size="16" /> Nuevo Cliente</button>
+      </div>
     </div>
 
     <div class="filter-row">
@@ -26,12 +32,17 @@
         <div class="client-header">
           <div class="client-avatar">{{ initials(client.name) }}</div>
           <div class="client-info">
-            <div class="client-name">{{ client.name }}</div>
+            <div class="client-name-row">
+              <span class="client-name" :title="client.name">{{ client.name }}</span>
+              <button class="btn-name-edit" @click="openRenameModal(client)" title="Modificar únicamente el nombre (se guarda en MongoDB Atlas)">
+                <Pencil :size="12" />
+              </button>
+            </div>
             <div v-if="client.document" class="client-doc text-accent">CC: {{ client.document }}</div>
             <div class="client-phone-sub text-muted">{{ client.phone || 'Sin teléfono' }}</div>
           </div>
           <div class="client-actions">
-            <button class="btn-icon" @click="openEditModal(client)" title="Editar"><Pencil :size="15" /></button>
+            <button class="btn-icon" @click="openEditModal(client)" title="Editar datos completos"><Pencil :size="15" /></button>
             <button class="btn-icon" @click="viewHistory(client)" title="Ver historial"><ClipboardList :size="15" /></button>
             <button class="btn-icon btn-icon-danger" @click="confirmDelete(client)" title="Eliminar"><Trash2 :size="15" /></button>
           </div>
@@ -69,7 +80,44 @@
       </div>
     </div>
 
-    <!-- Add/Edit Modal -->
+    <!-- Quick Rename Modal (Solo nombre) -->
+    <div v-if="renamingClient" class="modal-overlay" @click.self="renamingClient = null">
+      <div class="modal" style="max-width: 440px;">
+        <div class="modal-header">
+          <h3 class="modal-title"><Pencil :size="18" /> Modificar Nombre del Cliente</h3>
+          <button class="modal-close" @click="renamingClient = null"><X :size="20" /></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-secondary" style="font-size: 13px; margin-bottom: 14px;">
+            Modifica el nombre del cliente. El cambio se enviará a <strong>MongoDB Atlas</strong> y actualizará en tiempo real sus ventas y deudas asociadas.
+          </p>
+          <div class="form-group">
+            <label class="form-label">Documento (solo lectura)</label>
+            <input class="form-control" :value="renamingClient.document || 'Sin documento'" disabled />
+          </div>
+          <div class="form-group" style="margin-top: 12px;">
+            <label class="form-label">Nombre del cliente *</label>
+            <input
+              v-model="renameValue"
+              class="form-control"
+              placeholder="Ingresa el nuevo nombre..."
+              @keyup.enter="saveRename"
+              autofocus
+            />
+            <span v-if="renameError" class="form-error">{{ renameError }}</span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" @click="renamingClient = null" :disabled="isRenaming">Cancelar</button>
+          <button class="btn btn-primary" @click="saveRename" :disabled="isRenaming">
+            <Check :size="16" v-if="!isRenaming" />
+            <span>{{ isRenaming ? 'Guardando en BD...' : 'Guardar en Base de Datos' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add/Edit Modal Completo -->
     <div v-if="showModal" class="modal-overlay" @click.self="closeModal">
       <div class="modal">
         <div class="modal-header">
@@ -107,8 +155,10 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" @click="closeModal">Cancelar</button>
-          <button class="btn btn-primary" @click="saveClient">{{ editingClient ? 'Actualizar' : 'Crear Cliente' }}</button>
+          <button class="btn btn-secondary" @click="closeModal" :disabled="isSaving">Cancelar</button>
+          <button class="btn btn-primary" @click="saveClient" :disabled="isSaving">
+            <span>{{ isSaving ? 'Guardando en BD...' : (editingClient ? 'Actualizar' : 'Crear Cliente') }}</span>
+          </button>
         </div>
       </div>
     </div>
@@ -179,8 +229,10 @@
           </p>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" @click="deleteTarget = null">Cancelar</button>
-          <button class="btn btn-danger" @click="doDelete">Eliminar</button>
+          <button class="btn btn-secondary" @click="deleteTarget = null" :disabled="isDeleting">Cancelar</button>
+          <button class="btn btn-danger" @click="doDelete" :disabled="isDeleting">
+            <span>{{ isDeleting ? 'Eliminando...' : 'Eliminar' }}</span>
+          </button>
         </div>
       </div>
     </div>
@@ -188,26 +240,53 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import store from '../stores/store.js'
 import { formatCurrency, formatDate, formatDateShort, formatNumber } from '../utils/calculations.js'
-import { Users, Plus, Search, Pencil, ClipboardList, Trash2, Phone, Mail, MapPin, ShoppingCart, AlertTriangle, X } from '@lucide/vue'
+import {
+  Users, Plus, Search, Pencil, ClipboardList, Trash2, Phone, Mail,
+  MapPin, ShoppingCart, AlertTriangle, X, RefreshCw, Check
+} from '@lucide/vue'
 
 const searchQuery = ref('')
 const showModal = ref(false)
 const editingClient = ref(null)
 const deleteTarget = ref(null)
 const historyClient = ref(null)
+const isRefreshing = ref(false)
+const isSaving = ref(false)
+const isDeleting = ref(false)
+
+// Quick rename state
+const renamingClient = ref(null)
+const renameValue = ref('')
+const renameError = ref('')
+const isRenaming = ref(false)
 
 const emptyForm = () => ({ document: '', name: '', phone: '', address: '', email: '', notes: '' })
 const form = reactive(emptyForm())
 const errors = reactive({})
 
+onMounted(async () => {
+  await refreshData()
+})
+
+async function refreshData() {
+  try {
+    isRefreshing.value = true
+    await Promise.allSettled([store.loadClients(), store.loadDebts(), store.loadSales()])
+  } catch (err) {
+    console.error('Error sincronizando clientes:', err)
+  } finally {
+    isRefreshing.value = false
+  }
+}
+
 const filteredClients = computed(() => {
-  const q = searchQuery.value.toLowerCase()
+  const q = searchQuery.value.toLowerCase().trim()
   if (!q) return store.clients
   return store.clients.filter(c =>
-    c.name.toLowerCase().includes(q) ||
+    (c.name || '').toLowerCase().includes(q) ||
     (c.document || '').toLowerCase().includes(q) ||
     (c.phone || '').includes(q)
   )
@@ -215,10 +294,37 @@ const filteredClients = computed(() => {
 
 const clientSales = computed(() => historyClient.value ? store.getClientSales(historyClient.value.id) : [])
 
-const initials = (name) => name.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()
+const initials = (name) => {
+  if (!name) return 'CL'
+  return name.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()
+}
 
 const clientSalesCount = (id) => store.sales.filter(s => s.clientId === id).length
 const clientDebt = (id) => store.debts.filter(d => d.clientId === id && d.status !== 'pagada').reduce((s, d) => s + d.balance, 0)
+
+function openRenameModal(client) {
+  renamingClient.value = client
+  renameValue.value = client.name
+  renameError.value = ''
+}
+
+async function saveRename() {
+  if (!renameValue.value.trim()) {
+    renameError.value = 'El nombre no puede estar vacío'
+    return
+  }
+  try {
+    isRenaming.value = true
+    renameError.value = ''
+    await store.updateClient(renamingClient.value.id, { name: renameValue.value.trim() })
+    renamingClient.value = null
+    await refreshData()
+  } catch (err) {
+    renameError.value = err.message || 'Error al actualizar el nombre en MongoDB'
+  } finally {
+    isRenaming.value = false
+  }
+}
 
 function openAddModal() {
   editingClient.value = null
@@ -226,13 +332,18 @@ function openAddModal() {
   Object.keys(errors).forEach(k => delete errors[k])
   showModal.value = true
 }
+
 function openEditModal(client) {
   editingClient.value = client
   Object.assign(form, { ...client })
   Object.keys(errors).forEach(k => delete errors[k])
   showModal.value = true
 }
-function closeModal() { showModal.value = false; editingClient.value = null }
+
+function closeModal() {
+  showModal.value = false
+  editingClient.value = null
+}
 
 function validate() {
   Object.keys(errors).forEach(k => delete errors[k])
@@ -248,16 +359,40 @@ function validate() {
   return Object.keys(errors).length === 0
 }
 
-function saveClient() {
+async function saveClient() {
   if (!validate()) return
-  if (editingClient.value) store.updateClient(editingClient.value.id, { ...form })
-  else store.addClient({ ...form })
-  closeModal()
+  try {
+    isSaving.value = true
+    if (editingClient.value) {
+      await store.updateClient(editingClient.value.id, { ...form })
+    } else {
+      await store.addClient({ ...form })
+    }
+    closeModal()
+    await refreshData()
+  } catch (err) {
+    // El store maneja la notificación
+  } finally {
+    isSaving.value = false
+  }
 }
 
 function viewHistory(client) { historyClient.value = client }
 function confirmDelete(client) { deleteTarget.value = client }
-function doDelete() { store.deleteClient(deleteTarget.value.id); deleteTarget.value = null }
+
+async function doDelete() {
+  if (!deleteTarget.value) return
+  try {
+    isDeleting.value = true
+    await store.deleteClient(deleteTarget.value.id)
+    deleteTarget.value = null
+    await refreshData()
+  } catch (err) {
+    // El store maneja la notificación
+  } finally {
+    isDeleting.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -276,8 +411,40 @@ function doDelete() { store.deleteClient(deleteTarget.value.id); deleteTarget.va
   flex-shrink: 0;
 }
 .client-info { flex: 1; min-width: 0; }
+.client-name-row { display: flex; align-items: center; gap: 6px; }
 .client-name { font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.client-doc { font-size: 12px; font-weight: 700; }
+
+.btn-name-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: rgba(216, 235, 52, 0.12);
+  border: 1px solid rgba(216, 235, 52, 0.25);
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+.btn-name-edit:hover {
+  background: var(--accent);
+  color: #0d0f12;
+  transform: scale(1.1);
+}
+
+.spin-anim {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.client-doc { font-size: 12px; font-weight: 700; margin-top: 2px; }
+.client-phone-sub { font-size: 12px; }
 .client-actions { display: flex; gap: 4px; }
 
 .client-details { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
@@ -302,6 +469,8 @@ function doDelete() { store.deleteClient(deleteTarget.value.id); deleteTarget.va
   .history-summary { grid-template-columns: 1fr; }
   .filter-row { flex-direction: column; }
   .filter-row .search-bar { width: 100%; }
-  .page-header .btn { width: 100%; justify-content: center; }
+  .page-header { flex-direction: column; align-items: stretch; gap: 12px; }
+  .page-header > div:last-child { display: flex; width: 100%; }
+  .page-header .btn { flex: 1; justify-content: center; }
 }
 </style>

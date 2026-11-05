@@ -1231,7 +1231,7 @@ function selectPayment(methodId) {
 }
 
 // ================= VENTAS PENDIENTES =================
-function saveAsPending() {
+async function saveAsPending() {
   if (cart.value.length === 0) {
     store.notify('Agrega al menos un producto al carrito para guardarla como pendiente', 'warning')
     return
@@ -1262,7 +1262,7 @@ function saveAsPending() {
     status: 'PENDIENTE',
   }
 
-  const saved = store.savePendingSale(pendingData)
+  const saved = await store.savePendingSale(pendingData)
 
   // Dejar libre el módulo de venta inmediatamente para poder atender a otro cliente
   resetSaleForm()
@@ -1309,11 +1309,11 @@ function continuePendingSale(sale) {
   store.notify(`Venta pendiente #${sale.id} cargada. Puedes agregar más productos o confirmarla.`, 'info')
 }
 
-function confirmCancelPending(sale) {
+async function confirmCancelPending(sale) {
   const ok = window.confirm(`¿Estás seguro de cancelar la venta pendiente #${sale.id}? Esta acción no se puede deshacer y no modificará el inventario.`)
   if (!ok) return
 
-  store.deletePendingSale(sale.id)
+  await store.deletePendingSale(sale.id)
   if (activePendingSaleId.value === sale.id) {
     resetSaleForm()
     activePendingSaleId.value = null
@@ -1409,12 +1409,17 @@ watch(
   { deep: true }
 )
 
-onMounted(() => {
+onMounted(async () => {
   restoreActiveDraft()
+  await Promise.allSettled([
+    store.loadProducts(),
+    store.loadClients(),
+    store.loadPendingSales()
+  ])
 })
 
 // ================= REGISTRO RÁPIDO DE CLIENTE =================
-function saveQuickClient() {
+async function saveQuickClient() {
   if (!quickClient.value.document.trim()) {
     store.notify('El documento de identidad es requerido', 'warning')
     return
@@ -1423,7 +1428,7 @@ function saveQuickClient() {
     store.notify('El nombre del cliente es requerido', 'warning')
     return
   }
-  const newC = store.addClient({
+  const newC = await store.addClient({
     document: quickClient.value.document.trim(),
     name: quickClient.value.name.trim(),
     phone: quickClient.value.phone.trim(),
@@ -1441,7 +1446,7 @@ function saveQuickClient() {
 }
 
 // ================= CONFIRMAR VENTA =================
-function submitSale() {
+async function submitSale() {
   if (cart.value.length === 0) {
     store.notify('Agrega productos al carrito antes de confirmar', 'warning')
     return
@@ -1489,10 +1494,10 @@ function submitSale() {
     interestRate: currentInterest,
   }
 
-  const registeredSale = store.registerSale(saleData)
+  const registeredSale = await store.registerSale(saleData)
   if (registeredSale) {
     if (activePendingSaleId.value) {
-      store.deletePendingSale(activePendingSaleId.value)
+      await store.deletePendingSale(activePendingSaleId.value)
       activePendingSaleId.value = null
     }
     clearActiveDraft()

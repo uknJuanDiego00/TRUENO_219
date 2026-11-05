@@ -5,7 +5,13 @@
         <h1 class="page-title"><Package :size="24" /> Inventario</h1>
         <p class="page-subtitle">{{ store.products.length }} productos y accesorios registrados</p>
       </div>
-      <button class="btn btn-primary" @click="openAddModal"><Plus :size="16" /> Agregar Producto / Accesorio</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-secondary" :disabled="isRefreshing" @click="refreshData" title="Recargar inventario desde MongoDB Atlas">
+          <RefreshCw :size="16" :class="{ 'spin-anim': isRefreshing }" />
+          <span>{{ isRefreshing ? 'Sincronizando...' : 'Recargar' }}</span>
+        </button>
+        <button class="btn btn-primary" @click="openAddModal"><Plus :size="16" /> Agregar Producto / Accesorio</button>
+      </div>
     </div>
 
     <!-- Filters -->
@@ -433,13 +439,31 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import store from '../stores/store.js'
 import { formatCurrency, formatNumber, getStockStatus } from '../utils/calculations.js'
 import {
-  Package, Plus, Search, CheckCircle, AlertTriangle, XCircle, Pencil, Trash2, X,
+  Package, Plus, Search, CheckCircle, AlertTriangle, XCircle, Pencil, Trash2, X, RefreshCw,
   Warehouse, Store, Boxes, ArrowLeftRight, ArrowUpRight, ArrowDownRight, Check
 } from '@lucide/vue'
+
+const isRefreshing = ref(false)
+const isSaving = ref(false)
+
+async function refreshData() {
+  try {
+    isRefreshing.value = true
+    await store.loadProducts()
+  } catch (err) {
+    console.error('Error cargando inventario:', err)
+  } finally {
+    isRefreshing.value = false
+  }
+}
+
+onMounted(async () => {
+  await refreshData()
+})
 
 const searchQuery = ref('')
 const filterCategory = ref('')
@@ -501,21 +525,23 @@ const filteredProducts = computed(() => {
 const getStatus = (p) => getStockStatus(p, store.config.lowStockThreshold)
 
 // Ajustes directos de stock
-function adjustStock(product, delta) {
-  if (!store.adjustStock(product.id, delta)) {
+async function adjustStock(product, delta) {
+  const ok = await store.adjustStock(product.id, delta)
+  if (!ok) {
     store.notify('No se puede reducir más el stock de tienda', 'warning')
   }
 }
 
-function adjustWarehouseStock(product, delta) {
-  if (!store.adjustWarehouseStock(product.id, delta)) {
+async function adjustWarehouseStock(product, delta) {
+  const ok = await store.adjustWarehouseStock(product.id, delta)
+  if (!ok) {
     store.notify('No se puede reducir más el stock de bodega', 'warning')
   }
 }
 
 // Traslado rápido de 1 unidad
-function transferStock(product, from, to, qty = 1) {
-  store.transferStock(product.id, from, to, qty)
+async function transferStock(product, from, to, qty = 1) {
+  await store.transferStock(product.id, from, to, qty)
 }
 
 // Modal de traslado personalizado
@@ -559,12 +585,14 @@ const previewWarehouseStock = computed(() => {
   return transferDirection.value === 'warehouse_to_store' ? Math.max(0, cur - qty) : cur + qty
 })
 
-function executeTransfer() {
+async function executeTransfer() {
   if (!transferTarget.value || transferAmount.value <= 0) return
   const from = transferDirection.value === 'warehouse_to_store' ? 'warehouse' : 'store'
   const to = transferDirection.value === 'warehouse_to_store' ? 'store' : 'warehouse'
-  if (store.transferStock(transferTarget.value.id, from, to, transferAmount.value)) {
+  const ok = await store.transferStock(transferTarget.value.id, from, to, transferAmount.value)
+  if (ok) {
     closeTransferModal()
+    await refreshData()
   }
 }
 
@@ -603,20 +631,34 @@ function validate() {
   return Object.keys(errors).length === 0
 }
 
-function saveProduct() {
+async function saveProduct() {
   if (!validate()) return
-  if (editingProduct.value) {
-    store.updateProduct(editingProduct.value.id, { ...form })
-  } else {
-    store.addProduct({ ...form })
+  try {
+    isSaving.value = true
+    if (editingProduct.value) {
+      await store.updateProduct(editingProduct.value.id, { ...form })
+    } else {
+      await store.addProduct({ ...form })
+    }
+    closeModal()
+    await refreshData()
+  } catch (err) {
+    // Notified in store
+  } finally {
+    isSaving.value = false
   }
-  closeModal()
 }
 
 function confirmDelete(product) { deleteTarget.value = product }
-function doDelete() {
-  store.deleteProduct(deleteTarget.value.id)
-  deleteTarget.value = null
+async function doDelete() {
+  if (!deleteTarget.value) return
+  try {
+    await store.deleteProduct(deleteTarget.value.id)
+    deleteTarget.value = null
+    await refreshData()
+  } catch (err) {
+    // Notified in store
+  }
 }
 </script>
 
@@ -994,3 +1036,11 @@ function doDelete() {
   .inv-stat-val { font-size: 16px; }
 }
 </style>
+
+.spin-anim {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

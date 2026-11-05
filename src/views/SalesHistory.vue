@@ -208,10 +208,12 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import store from '../stores/store.js'
 import { formatCurrency, formatDate } from '../utils/calculations.js'
 import { ClipboardList, Search, Eye, Receipt, X } from '@lucide/vue'
+
+onMounted(async () => { await store.loadSales() })
 
 const searchQuery = ref('')
 const filterMethod = ref('')

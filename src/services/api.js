@@ -6,7 +6,18 @@
 import axios from 'axios';
 
 // Get base URL from environment variable, fallback to local backend
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const getNormalizedApiUrl = () => {
+  let url = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api').trim();
+  // Strip trailing slashes
+  url = url.replace(/\/+$/, '');
+  // Auto-append /api if missing
+  if (!url.endsWith('/api')) {
+    url = `${url}/api`;
+  }
+  return url;
+};
+
+const API_BASE_URL = getNormalizedApiUrl();
 
 /**
  * Axios instance configured for TRUENO API

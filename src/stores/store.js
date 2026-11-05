@@ -1,6 +1,6 @@
 // ============================================
-//  TRUENO 219 - Central Store (Axios + Real Backend)
-//  Fully integrated with MongoDB Atlas via Express API
+//  TRUENO 219 - Central Store (Axios + Real MongoDB Backend)
+//  Fully automated real-time persistence with MongoDB Atlas
 // ============================================
 
 import { reactive } from 'vue';
@@ -13,7 +13,6 @@ import {
   SettingsService,
 } from '../services/index.js';
 
-// ---- Helpers for local cache fallback ----
 function persist(key, data) {
   try {
     localStorage.setItem('trueno_' + key, JSON.stringify(data));
@@ -31,24 +30,8 @@ function load(key, fallback) {
   }
 }
 
-// Fallback ID Generator for offline optimistic operations
-let _idCounters = load('id_counters', {
-  product: 100,
-  client: 100,
-  sale: 1000,
-  debt: 100,
-  payment: 100,
-  pending_sale: 100,
-});
-
-function nextId(type) {
-  _idCounters[type] = (_idCounters[type] || 100) + 1;
-  persist('id_counters', _idCounters);
-  return _idCounters[type];
-}
-
 const store = reactive({
-  // Initial state loaded from cache (No mock demo data)
+  // State loaded initially from local cache, immediately refreshed from MongoDB Atlas
   products: load('products', []),
   clients: load('clients', []),
   sales: load('sales', []),
@@ -66,25 +49,12 @@ const store = reactive({
   isLoading: false,
   isInitialized: false,
 
-  // ============ INITIALIZE & SYNC WITH BACKEND ============
-  async init() {
-    const token = localStorage.getItem('trueno_token');
-    if (!token) return;
-
-    this.isLoading = true;
+  // ============ DATA LOADERS (REAL MONGODB SYNC) ============
+  async loadProducts() {
     try {
-      const [productsData, clientsData, salesData, debtsData, pendingData, configData] =
-        await Promise.allSettled([
-          ProductsService.getAll({ all: 'true' }),
-          ClientsService.getAll({ all: 'true' }),
-          SalesService.getAll({ all: 'true' }),
-          DebtsService.getAll({ all: 'true' }),
-          PendingSalesService.getAll(),
-          SettingsService.getSettings(),
-        ]);
-
-      if (productsData.status === 'fulfilled' && Array.isArray(productsData.value)) {
-        this.products = productsData.value.map((p) => ({
+      const data = await ProductsService.getAll({ all: 'true' });
+      if (Array.isArray(data)) {
+        this.products = data.map((p) => ({
           ...p,
           id: p.originalId !== undefined ? p.originalId : p.id || p._id,
           stock: Math.max(0, Number(p.stock) || 0),
@@ -95,232 +65,264 @@ const store = reactive({
         }));
         this.saveProducts();
       }
+      return this.products;
+    } catch (err) {
+      console.warn('[Store loadProducts Error]:', err.message);
+      return this.products;
+    }
+  },
 
-      if (clientsData.status === 'fulfilled' && Array.isArray(clientsData.value)) {
-        this.clients = clientsData.value.map((c) => ({
+  async loadClients() {
+    try {
+      const data = await ClientsService.getAll({ all: 'true' });
+      if (Array.isArray(data)) {
+        this.clients = data.map((c) => ({
           ...c,
           id: c.originalId !== undefined ? c.originalId : c.id || c._id,
         }));
         this.saveClients();
       }
+      return this.clients;
+    } catch (err) {
+      console.warn('[Store loadClients Error]:', err.message);
+      return this.clients;
+    }
+  },
 
-      if (salesData.status === 'fulfilled' && Array.isArray(salesData.value)) {
-        this.sales = salesData.value.map((s) => ({
+  async loadSales() {
+    try {
+      const data = await SalesService.getAll({ all: 'true' });
+      if (Array.isArray(data)) {
+        this.sales = data.map((s) => ({
           ...s,
           id: s.originalId !== undefined ? s.originalId : s.id || s._id,
         }));
         this.saveSales();
       }
+      return this.sales;
+    } catch (err) {
+      console.warn('[Store loadSales Error]:', err.message);
+      return this.sales;
+    }
+  },
 
-      if (debtsData.status === 'fulfilled' && Array.isArray(debtsData.value)) {
-        this.debts = debtsData.value.map((d) => ({
+  async loadDebts() {
+    try {
+      const data = await DebtsService.getAll({ all: 'true' });
+      if (Array.isArray(data)) {
+        this.debts = data.map((d) => ({
           ...d,
           id: d.originalId !== undefined ? d.originalId : d.id || d._id,
         }));
+        this.updateDebtStatuses();
         this.saveDebts();
       }
+      return this.debts;
+    } catch (err) {
+      console.warn('[Store loadDebts Error]:', err.message);
+      return this.debts;
+    }
+  },
 
-      if (pendingData.status === 'fulfilled' && Array.isArray(pendingData.value)) {
-        this.pendingSales = pendingData.value.map((ps) => ({
+  async loadPendingSales() {
+    try {
+      const data = await PendingSalesService.getAll();
+      if (Array.isArray(data)) {
+        this.pendingSales = data.map((ps) => ({
           ...ps,
           id: ps.originalId !== undefined ? ps.originalId : ps.id || ps._id,
         }));
         this.savePendingSales();
       }
+      return this.pendingSales;
+    } catch (err) {
+      console.warn('[Store loadPendingSales Error]:', err.message);
+      return this.pendingSales;
+    }
+  },
 
-      if (configData.status === 'fulfilled' && configData.value) {
-        Object.assign(this.config, configData.value);
+  async loadSettings() {
+    try {
+      const data = await SettingsService.getSettings();
+      if (data) {
+        Object.assign(this.config, data);
         persist('config', this.config);
       }
+      return this.config;
+    } catch (err) {
+      console.warn('[Store loadSettings Error]:', err.message);
+      return this.config;
+    }
+  },
 
-      this.updateDebtStatuses();
+  async loadAll(force = false) {
+    if (this.isLoading && !force) return;
+    const token = localStorage.getItem('trueno_token');
+    if (!token) return;
+
+    this.isLoading = true;
+    try {
+      await Promise.allSettled([
+        this.loadProducts(),
+        this.loadClients(),
+        this.loadSales(),
+        this.loadDebts(),
+        this.loadPendingSales(),
+        this.loadSettings(),
+      ]);
       this.isInitialized = true;
     } catch (err) {
-      console.error('[Store Init Error] Sincronización fallida:', err);
+      console.error('[Store loadAll Error]:', err);
     } finally {
       this.isLoading = false;
     }
   },
 
-  // ============ PRODUCTS ============
+  async init() {
+    return this.loadAll(true);
+  },
+
+  // ============ PRODUCTS (CRUD WITH MONGODB) ============
   async addProduct(product) {
-    const tempId = nextId('product');
-    const localProduct = {
-      ...product,
-      id: tempId,
-      stock: Math.max(0, Number(product.stock) || 0),
-      warehouseStock: Math.max(0, Number(product.warehouseStock) || 0),
-      totalSold: 0,
-      createdAt: new Date().toISOString(),
-    };
-
-    // Optimistic local add
-    this.products.unshift(localProduct);
-    this.saveProducts();
-    this.notify('Guardando producto en la base de datos...', 'info');
-
     try {
       const created = await ProductsService.create(product);
-      if (created) {
-        const normalized = {
-          ...created,
-          id: created.originalId !== undefined ? created.originalId : created.id || created._id,
-          stock: Math.max(0, Number(created.stock) || 0),
-          warehouseStock: Math.max(0, Number(created.warehouseStock) || 0),
-        };
-        const idx = this.products.findIndex((p) => p.id === tempId);
-        if (idx !== -1) {
-          this.products[idx] = normalized;
-        }
-        this.saveProducts();
-        this.notify('Producto registrado en MongoDB correctamente', 'success');
-        return normalized;
-      }
+      const normalized = {
+        ...created,
+        id: created.originalId !== undefined ? created.originalId : created.id || created._id,
+        stock: Math.max(0, Number(created.stock) || 0),
+        warehouseStock: Math.max(0, Number(created.warehouseStock) || 0),
+        minStock: Number(created.minStock) || 5,
+        buyPrice: Number(created.buyPrice ?? created.buy_price) || 0,
+        sellPrice: Number(created.sellPrice ?? created.sell_price) || 0,
+      };
+
+      this.products.unshift(normalized);
+      this.saveProducts();
+      this.notify('Producto registrado en MongoDB correctamente', 'success');
+      return normalized;
     } catch (err) {
-      console.error('Error al crear producto en backend:', err);
-      this.notify(err.message || 'Error al guardar el producto en el servidor', 'danger');
+      console.error('Error al registrar producto:', err);
+      this.notify(err.message || 'Error al guardar producto en el servidor', 'danger');
+      throw err;
     }
-    return localProduct;
   },
 
   async updateProduct(id, data) {
     const idx = this.products.findIndex((p) => p.id === id || p._id === id);
-    if (idx !== -1) {
-      const current = this.products[idx];
-      const updatedLocal = {
-        ...current,
-        ...data,
-        stock: Math.max(0, Number(data.stock !== undefined ? data.stock : current.stock) || 0),
-        warehouseStock: Math.max(
-          0,
-          Number(data.warehouseStock !== undefined ? data.warehouseStock : current.warehouseStock) || 0
-        ),
-        updatedAt: new Date().toISOString(),
-      };
-      this.products[idx] = updatedLocal;
-      this.saveProducts();
+    const target = idx !== -1 ? this.products[idx] : null;
+    const targetId = target?._id || id;
 
-      try {
-        const backendTargetId = current._id || id;
-        const result = await ProductsService.update(backendTargetId, data);
-        if (result) {
-          this.products[idx] = {
-            ...result,
-            id: result.originalId !== undefined ? result.originalId : result.id || result._id,
-          };
-          this.saveProducts();
-        }
-        this.notify('Producto actualizado', 'success');
-      } catch (err) {
-        console.error('Error actualizando producto en backend:', err);
-        this.notify(err.message || 'Error al actualizar producto en el servidor', 'danger');
+    try {
+      const updated = await ProductsService.update(targetId, data);
+      const normalized = {
+        ...updated,
+        id: updated.originalId !== undefined ? updated.originalId : updated.id || updated._id,
+      };
+
+      if (idx !== -1) {
+        this.products[idx] = normalized;
+      } else {
+        this.products.unshift(normalized);
       }
+      this.saveProducts();
+      this.notify('Producto actualizado en MongoDB', 'success');
+      return normalized;
+    } catch (err) {
+      console.error('Error actualizando producto:', err);
+      this.notify(err.message || 'Error al actualizar producto', 'danger');
+      throw err;
     }
   },
 
   async deleteProduct(id) {
     const idx = this.products.findIndex((p) => p.id === id || p._id === id);
-    if (idx !== -1) {
-      const target = this.products[idx];
-      this.products.splice(idx, 1);
-      this.saveProducts();
-      this.notify('Producto eliminado', 'info');
+    const target = idx !== -1 ? this.products[idx] : null;
+    const targetId = target?._id || id;
 
-      try {
-        const backendTargetId = target._id || id;
-        await ProductsService.delete(backendTargetId);
-      } catch (err) {
-        console.error('Error eliminando producto en backend:', err);
-        this.notify(err.message || 'Error al eliminar producto en el servidor', 'danger');
+    try {
+      await ProductsService.delete(targetId);
+      if (idx !== -1) {
+        this.products.splice(idx, 1);
+        this.saveProducts();
       }
+      this.notify('Producto eliminado de MongoDB', 'info');
+      return true;
+    } catch (err) {
+      console.error('Error eliminando producto:', err);
+      this.notify(err.message || 'Error al eliminar producto', 'danger');
+      throw err;
     }
   },
 
   async adjustStock(id, delta) {
     const p = this.products.find((prod) => prod.id === id || prod._id === id);
-    if (p) {
-      const newStock = (Number(p.stock) || 0) + delta;
-      if (newStock < 0) return false;
-      p.stock = newStock;
-      p.updatedAt = new Date().toISOString();
-      this.saveProducts();
+    if (!p) return false;
+    const targetId = p._id || id;
 
-      try {
-        const targetId = p._id || id;
-        await ProductsService.adjustStock(targetId, delta, 'store', 'Ajuste desde tienda');
-      } catch (err) {
-        console.warn('Ajuste de stock no sincronizado con backend:', err.message);
+    try {
+      const updatedProduct = await ProductsService.adjustStock(targetId, delta, 'store', 'Ajuste desde tienda');
+      if (updatedProduct) {
+        p.stock = updatedProduct.stock;
+        p.warehouseStock = updatedProduct.warehouseStock;
+        p.updatedAt = new Date().toISOString();
+        this.saveProducts();
       }
       return true;
+    } catch (err) {
+      console.error('Error ajustando stock en backend:', err);
+      this.notify(err.message || 'Error al ajustar stock en el servidor', 'danger');
+      return false;
     }
-    return false;
   },
 
   async adjustWarehouseStock(id, delta) {
     const p = this.products.find((prod) => prod.id === id || prod._id === id);
-    if (p) {
-      const newWarehouse = (Number(p.warehouseStock) || 0) + delta;
-      if (newWarehouse < 0) return false;
-      p.warehouseStock = newWarehouse;
-      p.updatedAt = new Date().toISOString();
-      this.saveProducts();
+    if (!p) return false;
+    const targetId = p._id || id;
 
-      try {
-        const targetId = p._id || id;
-        await ProductsService.adjustStock(targetId, delta, 'warehouse', 'Ajuste en bodega');
-      } catch (err) {
-        console.warn('Ajuste de bodega no sincronizado con backend:', err.message);
+    try {
+      const updatedProduct = await ProductsService.adjustStock(targetId, delta, 'warehouse', 'Ajuste en bodega');
+      if (updatedProduct) {
+        p.stock = updatedProduct.stock;
+        p.warehouseStock = updatedProduct.warehouseStock;
+        p.updatedAt = new Date().toISOString();
+        this.saveProducts();
       }
       return true;
+    } catch (err) {
+      console.error('Error ajustando bodega en backend:', err);
+      this.notify(err.message || 'Error al ajustar stock de bodega', 'danger');
+      return false;
     }
-    return false;
   },
 
   async transferStock(id, from, to, amount = 1) {
     const p = this.products.find((prod) => prod.id === id || prod._id === id);
     if (!p) return false;
     const qty = Math.max(1, parseInt(amount) || 1);
-    p.stock = Math.max(0, Number(p.stock) || 0);
-    p.warehouseStock = Math.max(0, Number(p.warehouseStock) || 0);
+    const targetId = p._id || id;
 
-    if (from === 'warehouse' && to === 'store') {
-      if (p.warehouseStock < qty) {
-        this.notify(`No hay suficiente cantidad en bodega (disponible: ${p.warehouseStock})`, 'warning');
-        return false;
+    try {
+      const updatedProduct = await ProductsService.transferStock(
+        targetId,
+        from,
+        to,
+        qty,
+        `Traslado de ${qty} unidad(es)`
+      );
+      if (updatedProduct) {
+        p.stock = updatedProduct.stock;
+        p.warehouseStock = updatedProduct.warehouseStock;
+        p.updatedAt = new Date().toISOString();
+        this.saveProducts();
       }
-      p.warehouseStock -= qty;
-      p.stock += qty;
-      p.updatedAt = new Date().toISOString();
-      this.saveProducts();
-      this.notify(`Se pasaron ${qty} unidad(es) de Bodega a Tienda (${p.name})`, 'success');
-
-      try {
-        const targetId = p._id || id;
-        await ProductsService.transferStock(targetId, from, to, qty, `Traslado de ${qty} unidad(es)`);
-      } catch (err) {
-        console.warn('Traslado no sincronizado con backend:', err.message);
-      }
+      this.notify(`Traslado de ${qty} unidad(es) registrado en MongoDB`, 'success');
       return true;
-    } else if (from === 'store' && to === 'warehouse') {
-      if (p.stock < qty) {
-        this.notify(`No hay suficiente cantidad en tienda (disponible: ${p.stock})`, 'warning');
-        return false;
-      }
-      p.stock -= qty;
-      p.warehouseStock += qty;
-      p.updatedAt = new Date().toISOString();
-      this.saveProducts();
-      this.notify(`Se pasaron ${qty} unidad(es) de Tienda a Bodega (${p.name})`, 'success');
-
-      try {
-        const targetId = p._id || id;
-        await ProductsService.transferStock(targetId, from, to, qty, `Traslado de ${qty} unidad(es)`);
-      } catch (err) {
-        console.warn('Traslado no sincronizado con backend:', err.message);
-      }
-      return true;
+    } catch (err) {
+      console.error('Error trasladando stock en backend:', err);
+      this.notify(err.message || 'Error al registrar traslado', 'danger');
+      return false;
     }
-    return false;
   },
 
   getProductById(id) {
@@ -331,89 +333,100 @@ const store = reactive({
     persist('products', this.products);
   },
 
-  // ============ CLIENTS ============
+  // ============ CLIENTS (CRUD WITH MONGODB) ============
   async addClient(client) {
-    if (client.document && client.document.trim()) {
-      const existing = this.clients.find((c) => c.document === client.document.trim());
-      if (existing) {
-        this.notify(`Ya existe un cliente con documento ${client.document}: ${existing.name}`, 'warning');
-        return null;
-      }
-    }
-
-    const tempId = nextId('client');
-    const localClient = {
-      ...client,
-      id: tempId,
-      document: (client.document || '').trim(),
-      totalBought: 0,
-      createdAt: new Date().toISOString(),
-    };
-    this.clients.unshift(localClient);
-    this.saveClients();
-
     try {
       const created = await ClientsService.create(client);
-      if (created) {
-        const normalized = {
-          ...created,
-          id: created.originalId !== undefined ? created.originalId : created.id || created._id,
-        };
-        const idx = this.clients.findIndex((c) => c.id === tempId);
-        if (idx !== -1) {
-          this.clients[idx] = normalized;
-        }
-        this.saveClients();
-        this.notify('Cliente registrado exitosamente', 'success');
-        return normalized;
-      }
+      const normalized = {
+        ...created,
+        id: created.originalId !== undefined ? created.originalId : created.id || created._id,
+      };
+
+      this.clients.unshift(normalized);
+      this.saveClients();
+      this.notify('Cliente guardado en MongoDB exitosamente', 'success');
+      return normalized;
     } catch (err) {
-      console.error('Error creando cliente en backend:', err);
-      this.notify(err.message || 'Error al guardar cliente en el servidor', 'danger');
+      console.error('Error creando cliente:', err);
+      this.notify(err.message || 'Error al registrar cliente', 'danger');
+      throw err;
     }
-    return localClient;
   },
 
   async updateClient(id, data) {
     const idx = this.clients.findIndex((c) => c.id === id || c._id === id);
-    if (idx !== -1) {
-      const current = this.clients[idx];
-      this.clients[idx] = { ...current, ...data, updatedAt: new Date().toISOString() };
+    const current = idx !== -1 ? this.clients[idx] : null;
+    const targetId = current?._id || id;
+
+    try {
+      const updated = await ClientsService.update(targetId, data);
+      const normalized = {
+        ...updated,
+        id: updated.originalId !== undefined ? updated.originalId : updated.id || updated._id,
+      };
+
+      if (idx !== -1) {
+        this.clients[idx] = normalized;
+      } else {
+        this.clients.unshift(normalized);
+      }
       this.saveClients();
 
-      try {
-        const targetId = current._id || id;
-        const updated = await ClientsService.update(targetId, data);
-        if (updated) {
-          this.clients[idx] = {
-            ...updated,
-            id: updated.originalId !== undefined ? updated.originalId : updated.id || updated._id,
-          };
-          this.saveClients();
-        }
-        this.notify('Cliente actualizado', 'success');
-      } catch (err) {
-        console.error('Error actualizando cliente en backend:', err);
-        this.notify(err.message || 'Error al actualizar cliente', 'danger');
+      // If client name was modified, update local debts and sales immediately
+      if (data.name) {
+        const clientIdentifier = normalized.id;
+        const clientRef = normalized._id;
+        const clientDoc = normalized.document;
+
+        this.debts.forEach((d) => {
+          if (
+            d.clientId === clientIdentifier ||
+            d.clientRef === clientRef ||
+            (clientDoc && d.clientDocument === clientDoc)
+          ) {
+            d.clientName = data.name;
+          }
+        });
+        this.saveDebts();
+
+        this.sales.forEach((s) => {
+          if (
+            s.clientId === clientIdentifier ||
+            s.clientRef === clientRef ||
+            (clientDoc && s.clientDocument === clientDoc)
+          ) {
+            s.clientName = data.name;
+          }
+        });
+        this.saveSales();
       }
+
+      this.notify('Cliente actualizado en MongoDB correctamente', 'success');
+      return normalized;
+    } catch (err) {
+      console.error('Error actualizando cliente:', err);
+      this.notify(err.message || 'Error al actualizar cliente', 'danger');
+      throw err;
     }
   },
 
   async deleteClient(id) {
     const idx = this.clients.findIndex((c) => c.id === id || c._id === id);
-    if (idx !== -1) {
-      const target = this.clients[idx];
-      this.clients.splice(idx, 1);
-      this.saveClients();
-      this.notify('Cliente eliminado', 'info');
+    const current = idx !== -1 ? this.clients[idx] : null;
+    const targetId = current?._id || id;
 
-      try {
-        const targetId = target._id || id;
-        await ClientsService.delete(targetId);
-      } catch (err) {
-        console.error('Error eliminando cliente en backend:', err);
-        this.notify(err.message || 'Error al eliminar cliente en el servidor', 'danger');
+    try {
+      await ClientsService.delete(targetId);
+      if (idx !== -1) {
+        this.clients.splice(idx, 1);
+        this.saveClients();
       }
+      this.notify('Cliente eliminado de MongoDB', 'info');
+      return true;
+    } catch (err) {
+      console.error('Error eliminando cliente:', err);
+      this.notify(err.message || 'Error al eliminar cliente', 'danger');
+      throw err;
     }
   },
 
@@ -430,144 +443,48 @@ const store = reactive({
     persist('clients', this.clients);
   },
 
-  // ============ SALES ============
-  async registerSale({
-    items,
-    clientId,
-    clientName,
-    clientDocument,
-    paymentMethod,
-    paid,
-    total: passedTotal,
-    discount = 0,
-    interestRate = 0,
-  }) {
-    if (!items || !items.length) {
-      this.notify('El carrito no contiene productos', 'warning');
-      return null;
-    }
-
-    // Verify stock locally
-    for (const item of items) {
-      const product = this.products.find((p) => p.id === item.productId || p._id === item.productId);
-      if (!product) {
-        this.notify(`Producto no encontrado: ${item.name}`, 'danger');
-        return null;
-      }
-      if (product.stock < item.qty) {
-        this.notify(`Stock insuficiente para: ${item.name} (disponibles: ${product.stock})`, 'danger');
-        return null;
-      }
-    }
-
-    const itemsSubtotal = items.reduce((s, i) => s + (Number(i.subtotal) || 0), 0);
-    const finalDiscount = Math.max(0, Number(discount) || 0);
-    const baseTotal =
-      passedTotal !== undefined
-        ? Math.max(0, Number(passedTotal) || 0)
-        : Math.max(0, itemsSubtotal - finalDiscount);
-
-    const finalInterestRate =
-      paymentMethod === 'Crédito' ? Math.max(0, Math.min(100, Number(interestRate) || 0)) : 0;
-    const interestAmount =
-      finalInterestRate > 0 ? Math.round((baseTotal * finalInterestRate) / 100) : 0;
-    const finalTotal = baseTotal + interestAmount;
-    const paidAmount =
-      paymentMethod === 'Crédito' ? Math.max(0, Math.min(finalTotal, Number(paid) || 0)) : finalTotal;
-
-    const salePayload = {
-      clientId,
-      clientName: clientName || 'Consumidor Final',
-      clientDocument: clientDocument || '',
-      items: items.map((i) => ({
-        productId: i.productId,
-        name: i.name,
-        price: Number(i.price) || 0,
-        qty: Number(i.qty) || 1,
-        subtotal: Number(i.subtotal) || 0,
-      })),
-      subtotal: itemsSubtotal,
-      discount: finalDiscount,
-      total: finalTotal,
-      baseTotal,
-      interestRate: finalInterestRate,
-      interestAmount,
-      paid: paidAmount,
-      paymentMethod,
-    };
-
+  // ============ SALES (CRUD WITH MONGODB) ============
+  async registerSale(payload) {
     try {
-      const result = await SalesService.registerSale(salePayload);
+      const result = await SalesService.registerSale(payload);
       const savedSale = result?.sale || result;
       const normalizedSale = {
         ...savedSale,
         id: savedSale.originalId !== undefined ? savedSale.originalId : savedSale.id || savedSale._id,
       };
 
-      // Deduct stock in local state
-      items.forEach((item) => {
-        const p = this.products.find((prod) => prod.id === item.productId || prod._id === item.productId);
-        if (p) {
-          p.stock = Math.max(0, p.stock - item.qty);
-          p.totalSold = (Number(p.totalSold) || 0) + item.qty;
-        }
-      });
-      this.saveProducts();
-
-      // Update client total bought
-      if (clientId) {
-        const client = this.clients.find((c) => c.id === clientId || c._id === clientId);
-        if (client) {
-          client.totalBought = (Number(client.totalBought) || 0) + finalTotal;
-          this.saveClients();
-        }
-      }
-
-      // Add debt if credit and debt returned
-      if (result?.debt) {
-        const debtObj = {
-          ...result.debt,
-          id: result.debt.originalId !== undefined ? result.debt.originalId : result.debt.id || result.debt._id,
-        };
-        this.debts.unshift(debtObj);
-        this.saveDebts();
-      }
-
       this.sales.unshift(normalizedSale);
       this.saveSales();
-      this.notify('Venta registrada correctamente en el sistema', 'success');
+
+      // Refresh store inventory and debts from MongoDB
+      await Promise.allSettled([this.loadProducts(), this.loadDebts(), this.loadClients()]);
+
+      this.notify('Venta guardada en MongoDB exitosamente', 'success');
       return normalizedSale;
     } catch (err) {
-      console.error('Error registrando venta en backend:', err);
+      console.error('Error registrando venta:', err);
       this.notify(err.message || 'Error al procesar la venta en el servidor', 'danger');
-      return null;
+      throw err;
     }
   },
 
   async cancelSale(id, reason = 'Anulada por usuario') {
     const sale = this.sales.find((s) => s.id === id || s._id === id);
     if (!sale) return;
+    const targetId = sale._id || id;
 
     try {
-      const targetId = sale._id || id;
       await SalesService.cancelSale(targetId, reason);
       sale.status = 'anulada';
-
-      // Restore local stock
-      sale.items.forEach((item) => {
-        const p = this.products.find((prod) => prod.id === item.productId || prod._id === item.productId);
-        if (p) {
-          p.stock += item.qty;
-          p.totalSold = Math.max(0, (p.totalSold || 0) - item.qty);
-        }
-      });
-
-      this.saveProducts();
       this.saveSales();
-      this.notify('Venta anulada correctamente', 'success');
+
+      // Refresh products from MongoDB to reflect restored stock
+      await this.loadProducts();
+      this.notify('Venta anulada e inventario repuesto en MongoDB', 'success');
     } catch (err) {
       console.error('Error anulando venta:', err);
       this.notify(err.message || 'Error al anular la venta', 'danger');
+      throw err;
     }
   },
 
@@ -577,106 +494,72 @@ const store = reactive({
 
   // ============ PENDING SALES ============
   async savePendingSale(saleData) {
-    if (saleData.id) {
-      const idx = this.pendingSales.findIndex((p) => p.id === saleData.id || p._id === saleData.id);
-      if (idx !== -1) {
-        this.pendingSales[idx] = {
-          ...this.pendingSales[idx],
-          ...saleData,
-          status: 'PENDIENTE',
-          updatedAt: new Date().toISOString(),
-        };
-        this.savePendingSales();
-
-        try {
-          const targetId = this.pendingSales[idx]._id || saleData.id;
-          await PendingSalesService.update(targetId, saleData);
-        } catch (e) {
-          console.warn('Pending sale update error:', e.message);
-        }
-
-        this.notify(`Venta pendiente #${saleData.id} actualizada`, 'success');
-        return this.pendingSales[idx];
-      }
-    }
-
-    const pendingNum = nextId('pending_sale');
-    const formattedId = `PEND-${String(pendingNum).padStart(3, '0')}`;
-    const pendingLocal = {
-      ...saleData,
-      id: formattedId,
-      status: 'PENDIENTE',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    this.pendingSales.unshift(pendingLocal);
-    this.savePendingSales();
-
     try {
-      const created = await PendingSalesService.create(saleData);
-      if (created) {
+      if (saleData.id && !String(saleData.id).startsWith('PEND-')) {
+        const targetId = saleData._id || saleData.id;
+        const updated = await PendingSalesService.update(targetId, saleData);
+        const normalized = {
+          ...updated,
+          id: updated.originalId !== undefined ? updated.originalId : updated.id || updated._id,
+        };
+        const idx = this.pendingSales.findIndex((p) => p.id === saleData.id || p._id === saleData.id);
+        if (idx !== -1) this.pendingSales[idx] = normalized;
+        this.savePendingSales();
+        this.notify('Venta en espera actualizada en MongoDB', 'success');
+        return normalized;
+      } else {
+        const created = await PendingSalesService.create(saleData);
         const normalized = {
           ...created,
           id: created.originalId !== undefined ? created.originalId : created.id || created._id,
         };
-        const idx = this.pendingSales.findIndex((p) => p.id === formattedId);
-        if (idx !== -1) {
-          this.pendingSales[idx] = normalized;
-        }
+        this.pendingSales.unshift(normalized);
         this.savePendingSales();
+        this.notify('Venta en espera guardada en MongoDB', 'success');
+        return normalized;
       }
-    } catch (e) {
-      console.warn('Pending sale create error:', e.message);
+    } catch (err) {
+      console.error('Error con venta en espera:', err);
+      this.notify(err.message || 'Error al guardar venta en espera', 'danger');
+      throw err;
     }
-
-    this.notify(`Venta guardada como pendiente`, 'success');
-    return pendingLocal;
   },
 
   async confirmPendingSale(id, paymentMethod = 'Efectivo', paid) {
     const idx = this.pendingSales.findIndex((p) => p.id === id || p._id === id);
-    if (idx === -1) return;
+    const targetId = idx !== -1 ? this.pendingSales[idx]._id || id : id;
 
-    const pending = this.pendingSales[idx];
     try {
-      const targetId = pending._id || id;
       const result = await PendingSalesService.confirm(targetId, paymentMethod, paid);
-      this.pendingSales.splice(idx, 1);
-      this.savePendingSales();
-
-      if (result?.sale) {
-        const normalized = {
-          ...result.sale,
-          id: result.sale.originalId !== undefined ? result.sale.originalId : result.sale.id || result.sale._id,
-        };
-        this.sales.unshift(normalized);
-        this.saveSales();
+      if (idx !== -1) {
+        this.pendingSales.splice(idx, 1);
+        this.savePendingSales();
       }
 
-      // Refresh products to ensure correct stock
-      await this.init();
-      this.notify('Venta en espera confirmada y procesada', 'success');
+      await Promise.allSettled([this.loadSales(), this.loadProducts(), this.loadDebts()]);
+      this.notify('Venta en espera confirmada y guardada en MongoDB', 'success');
+      return result;
     } catch (err) {
-      console.error('Error confirmando venta pendiente:', err);
-      this.notify(err.message || 'Error al confirmar venta pendiente', 'danger');
+      console.error('Error confirmando venta en espera:', err);
+      this.notify(err.message || 'Error al confirmar venta en espera', 'danger');
+      throw err;
     }
   },
 
   async deletePendingSale(id) {
     const idx = this.pendingSales.findIndex((p) => p.id === id || p._id === id);
-    if (idx !== -1) {
-      const target = this.pendingSales[idx];
-      this.pendingSales.splice(idx, 1);
-      this.savePendingSales();
-      this.notify(`Venta pendiente eliminada`, 'info');
+    const targetId = idx !== -1 ? this.pendingSales[idx]._id || id : id;
 
-      try {
-        const targetId = target._id || id;
-        await PendingSalesService.delete(targetId);
-      } catch (err) {
-        console.warn('Error eliminando venta pendiente en servidor:', err.message);
+    try {
+      await PendingSalesService.delete(targetId);
+      if (idx !== -1) {
+        this.pendingSales.splice(idx, 1);
+        this.savePendingSales();
       }
+      this.notify('Venta en espera eliminada de MongoDB', 'info');
+    } catch (err) {
+      console.error('Error eliminando venta pendiente:', err);
+      this.notify(err.message || 'Error al eliminar venta pendiente', 'danger');
     }
   },
 
@@ -688,7 +571,7 @@ const store = reactive({
     persist('pending_sales', this.pendingSales);
   },
 
-  // ============ DEBTS ============
+  // ============ DEBTS & PAYMENTS ============
   async addPayment(debtId, amount, note = '') {
     const debt = this.debts.find((d) => d.id === debtId || d._id === debtId);
     if (!debt) return;
@@ -702,39 +585,16 @@ const store = reactive({
       return;
     }
 
-    const now = new Date().toISOString();
-    debt.paid = (Number(debt.paid) || 0) + numAmount;
-    debt.balance = Math.max(0, (Number(debt.balance) || 0) - numAmount);
-    if (!debt.payments) debt.payments = [];
-    debt.payments.push({ id: nextId('payment'), amount: numAmount, date: now, note });
-    debt.updatedAt = now;
-
-    // Sync sale paid amount
-    const sale = this.sales.find((s) => s.id === debt.saleId || s._id === debt.saleId);
-    if (sale) {
-      sale.paid = Math.min(sale.total, (Number(sale.paid) || 0) + numAmount);
-      sale.updatedAt = now;
-      if (debt.balance <= 0) {
-        sale.status = 'pagada';
-        sale.paid = sale.total;
-      }
-      this.saveSales();
-    }
-
-    if (debt.balance <= 0) {
-      debt.status = 'pagada';
-      this.notify('Deuda pagada completamente', 'success');
-    } else {
-      this.notify('Abono registrado correctamente', 'success');
-    }
-
-    this.saveDebts();
+    const targetId = debt._id || debtId;
 
     try {
-      const targetId = debt._id || debtId;
       await DebtsService.addPayment(targetId, numAmount, 'Efectivo', note);
+      await Promise.allSettled([this.loadDebts(), this.loadSales()]);
+      this.notify('Abono registrado en MongoDB exitosamente', 'success');
     } catch (err) {
-      console.warn('Error registrando abono en backend:', err.message);
+      console.error('Error registrando abono en backend:', err);
+      this.notify(err.message || 'Error al guardar abono en el servidor', 'danger');
+      throw err;
     }
   },
 
@@ -753,14 +613,16 @@ const store = reactive({
 
   // ============ CONFIG ============
   async updateConfig(cfg) {
-    Object.assign(this.config, cfg);
-    persist('config', this.config);
-    this.notify('Configuración guardada', 'success');
-
     try {
-      await SettingsService.updateSettings(cfg);
+      const updated = await SettingsService.updateSettings(cfg);
+      if (updated) {
+        Object.assign(this.config, updated);
+        persist('config', this.config);
+      }
+      this.notify('Configuración guardada en MongoDB', 'success');
     } catch (err) {
-      console.warn('Error guardando configuración en backend:', err.message);
+      console.error('Error guardando configuración:', err);
+      this.notify(err.message || 'Error al guardar configuración', 'danger');
     }
   },
 
