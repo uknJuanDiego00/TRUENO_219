@@ -413,5 +413,25 @@ const handleLogin = async () => {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+@media (max-width: 480px) {
+  .login-wrapper {
+    padding: 16px;
+  }
+  .login-card {
+    padding: 28px 18px;
+    border-radius: var(--radius-lg);
+  }
+  .brand-name {
+    font-size: 20px;
+  }
+  .login-logo-img {
+    height: 40px;
+  }
+  .login-subtitle {
+    font-size: 12px;
+  }
+}
+
 </style>
 

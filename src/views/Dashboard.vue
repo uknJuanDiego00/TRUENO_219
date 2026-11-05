@@ -484,4 +484,28 @@ onUnmounted(() => {
 @media (max-width: 600px) {
   .grid-4 { grid-template-columns: 1fr 1fr; }
 }
+
+@media (max-width: 520px) {
+  .alert-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .alert-actions-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .recent-sale-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .recent-sale-right {
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+}
+
 </style>

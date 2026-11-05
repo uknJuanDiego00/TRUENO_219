@@ -298,7 +298,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import store from '../stores/store.js'
 import { formatCurrency, formatDate, formatDateShort, getDebtStatus } from '../utils/calculations.js'
 import {
-  Wallet, ClipboardList, AlertOctagon, BadgeDollarSign, Search, Calendar,
+  Wallet, ClipboardList, AlertOctagon, BadgeDollarSign, Search, Calendar, RefreshCw,
   AlertTriangle, CheckCircle2, CreditCard, X, Users, ChevronDown, ChevronRight, Trash2, Minus, Plus
 } from '@lucide/vue'
 
@@ -339,27 +339,26 @@ const groupedDebts = computed(() => {
 
   for (const d of store.debts) {
     let doc = (d.clientDocument || '').trim()
-    if (!doc && (d.clientId || d.clientRef)) {
-      const foundClient = store.clients.find(c =>
-        c.id === d.clientId ||
-        c._id === d.clientId ||
-        c._id === d.clientRef ||
-        c.originalId === d.clientId
-      )
-      if (foundClient?.document) {
-        doc = String(foundClient.document).trim()
-      }
+    const foundClient = store.clients.find(c =>
+      (d.clientId && (c.id === d.clientId || c._id === d.clientId || c.originalId === d.clientId)) ||
+      (d.clientRef && c._id === d.clientRef) ||
+      (doc && (c.document || '').trim() === doc)
+    ) || null
+
+    if (!doc && foundClient?.document) {
+      doc = String(foundClient.document).trim()
     }
 
+    const resolvedName = foundClient?.name || d.clientName || 'Cliente General'
     const clientKey = d.clientId ?? (doc || null)
-    const key = clientKey !== null ? `id-${clientKey}` : `name-${d.clientName || 'Sin Cliente'}`
+    const key = clientKey !== null ? `id-${clientKey}` : `name-${resolvedName}`
 
     if (!map.has(key)) {
       map.set(key, {
         key,
         clientId: clientKey,
         clientDocument: doc,
-        clientName: foundClient?.name || d.clientName || 'Cliente General',
+        clientName: resolvedName,
         debts: [],
         total: 0,
         paid: 0,
@@ -906,8 +905,6 @@ function incrementDebtItem(debt, itemIndex) {
   .pm-balance { grid-column: 1; }
   .quick-amounts { gap: 6px; }
 }
-</style>
-
 .spin-anim {
   animation: spin 1s linear infinite;
 }
@@ -915,3 +912,37 @@ function incrementDebtItem(debt, itemIndex) {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+@media (max-width: 540px) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .page-header > div:last-child {
+    display: flex;
+    width: 100%;
+  }
+  .page-header .btn {
+    flex: 1;
+    justify-content: center;
+  }
+  .debt-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .debt-status-area {
+    width: 100%;
+    display: flex;
+    justify-content: flex-start;
+  }
+  .dp-item {
+    flex-wrap: wrap;
+  }
+  .dp-name {
+    width: 100%;
+  }
+}
+
+</style>

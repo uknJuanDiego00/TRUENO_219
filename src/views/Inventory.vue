@@ -1035,8 +1035,6 @@ async function doDelete() {
   .inv-stat { padding: 10px 12px; }
   .inv-stat-val { font-size: 16px; }
 }
-</style>
-
 .spin-anim {
   animation: spin 1s linear infinite;
 }
@@ -1044,3 +1042,30 @@ async function doDelete() {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .page-header > div:last-child {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+    gap: 8px;
+  }
+  .page-header .btn {
+    flex: 1;
+    min-width: 120px;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 600px) {
+  .modal-body .grid-2 {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+</style>

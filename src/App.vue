@@ -317,6 +317,7 @@ onUnmounted(() => {
   top: calc(100% + 8px);
   right: 0;
   width: 230px;
+  max-width: calc(100vw - 24px);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
@@ -448,6 +449,7 @@ onUnmounted(() => {
   position: fixed;
   top: 0; left: 0;
   width: var(--sidebar-width);
+  max-width: 85vw;
   height: 100vh;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border-color);
