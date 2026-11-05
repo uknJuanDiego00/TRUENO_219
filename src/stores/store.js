@@ -1,79 +1,58 @@
 // ============================================
-//  TRUENO 219 - Central Data Store
-//  Uses localStorage for full persistence
+//  TRUENO 219 - Central Store (Axios + Real Backend)
+//  Fully integrated with MongoDB Atlas via Express API
 // ============================================
 
-import { reactive, watch } from 'vue'
+import { reactive } from 'vue';
+import {
+  ProductsService,
+  ClientsService,
+  SalesService,
+  DebtsService,
+  PendingSalesService,
+  SettingsService,
+} from '../services/index.js';
 
-// ---- Helper: persist to localStorage ----
+// ---- Helpers for local cache fallback ----
 function persist(key, data) {
-  localStorage.setItem('trueno_' + key, JSON.stringify(data))
+  try {
+    localStorage.setItem('trueno_' + key, JSON.stringify(data));
+  } catch (e) {
+    console.warn(`[Store Persist Error] ${key}:`, e);
+  }
 }
+
 function load(key, fallback) {
   try {
-    const raw = localStorage.getItem('trueno_' + key)
-    return raw ? JSON.parse(raw) : fallback
-  } catch { return fallback }
-}
-
-// ---- ID Generator ----
-let _idCounters = load('id_counters', { product: 100, client: 100, sale: 1000, debt: 100, payment: 100, pending_sale: 100 })
-function nextId(type) {
-  _idCounters[type] = (_idCounters[type] || 100) + 1
-  persist('id_counters', _idCounters)
-  return _idCounters[type]
-}
-
-// ---- Initial Clean Data (All metrics starting at 0) ----
-function generateDemoData() {
-  const products = [
-    { id: 1, name: 'Espejos Deportivos CNC', category: 'Espejos', description: 'Espejos de aluminio CNC anodizado', buyPrice: 18000, sellPrice: 35000, stock: 12, warehouseStock: 8, minStock: 5, sku: 'ESP-001', image: null, totalSold: 0, createdAt: new Date().toISOString() },
-    { id: 2, name: 'Maniguetas CNC Plegables', category: 'Maniguetas', description: 'Maniguetas plegables de alta resistencia', buyPrice: 22000, sellPrice: 45000, stock: 10, warehouseStock: 6, minStock: 3, sku: 'MAN-001', image: null, totalSold: 0, createdAt: new Date().toISOString() },
-    { id: 3, name: 'Direccionales LED Ámbar', category: 'Direccionales', description: 'Direccionales LED de alta visibilidad', buyPrice: 12000, sellPrice: 25000, stock: 15, warehouseStock: 10, minStock: 5, sku: 'DIR-001', image: null, totalSold: 0, createdAt: new Date().toISOString() },
-    { id: 4, name: 'Luces LED para Moto', category: 'Luces', description: 'Kit de luces LED multicolor', buyPrice: 15000, sellPrice: 30000, stock: 3, warehouseStock: 5, minStock: 4, sku: 'LUZ-001', image: null, totalSold: 0, createdAt: new Date().toISOString() },
-    { id: 5, name: 'Protector de Motor', category: 'Protección', description: 'Jaula de protección de motor aluminio', buyPrice: 45000, sellPrice: 90000, stock: 5, warehouseStock: 4, minStock: 2, sku: 'PRO-001', image: null, totalSold: 0, createdAt: new Date().toISOString() },
-    { id: 6, name: 'Soporte para Celular', category: 'Accesorios', description: 'Soporte universal resistente al agua', buyPrice: 10000, sellPrice: 22000, stock: 20, warehouseStock: 15, minStock: 5, sku: 'SOC-001', image: null, totalSold: 0, createdAt: new Date().toISOString() },
-    { id: 7, name: 'Slider para Moto', category: 'Protección', description: 'Sliders anticaída de poliamida', buyPrice: 25000, sellPrice: 55000, stock: 7, warehouseStock: 5, minStock: 3, sku: 'SLI-001', image: null, totalSold: 0, createdAt: new Date().toISOString() },
-    { id: 8, name: 'Porta Placa Deportivo', category: 'Estética', description: 'Porta placa con led integrado', buyPrice: 8000, sellPrice: 18000, stock: 14, warehouseStock: 10, minStock: 4, sku: 'POR-001', image: null, totalSold: 0, createdAt: new Date().toISOString() },
-  ]
-
-  const clients = [
-    { id: 1, document: '1001234567', name: 'Juan Pérez', phone: '3101234567', address: 'Cra 15 #20-30, Bogotá', email: 'juan@email.com', notes: 'Cliente frecuente', createdAt: new Date().toISOString(), totalBought: 0 },
-    { id: 2, document: '1007654321', name: 'María García', phone: '3157654321', address: 'Cll 45 #12-10, Medellín', email: 'maria@email.com', notes: '', createdAt: new Date().toISOString(), totalBought: 0 },
-    { id: 3, document: '1009876543', name: 'Carlos Rodríguez', phone: '3209876543', address: 'Av. 30 #45-67, Cali', email: '', notes: 'Mecánico de motos', createdAt: new Date().toISOString(), totalBought: 0 },
-  ]
-
-  const sales = []
-  const debts = []
-
-  return { products, clients, sales, debts }
-}
-
-// ---- Initialize Store ----
-const isFirstRun = !localStorage.getItem('trueno_initialized')
-let demoData = {}
-if (isFirstRun) {
-  demoData = generateDemoData()
-  localStorage.setItem('trueno_initialized', '1')
-}
-
-// Load products and ensure warehouseStock is defined on all items
-const initialProducts = load('products', demoData.products || [])
-initialProducts.forEach(p => {
-  p.stock = Math.max(0, Number(p.stock) || 0)
-  if (p.warehouseStock === undefined || p.warehouseStock === null || isNaN(p.warehouseStock)) {
-    // If it's the demo lights or previously loaded without warehouseStock
-    p.warehouseStock = p.name?.toLowerCase().includes('luces') ? 5 : 4
-  } else {
-    p.warehouseStock = Math.max(0, Number(p.warehouseStock) || 0)
+    const raw = localStorage.getItem('trueno_' + key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
   }
-})
+}
+
+// Fallback ID Generator for offline optimistic operations
+let _idCounters = load('id_counters', {
+  product: 100,
+  client: 100,
+  sale: 1000,
+  debt: 100,
+  payment: 100,
+  pending_sale: 100,
+});
+
+function nextId(type) {
+  _idCounters[type] = (_idCounters[type] || 100) + 1;
+  persist('id_counters', _idCounters);
+  return _idCounters[type];
+}
 
 const store = reactive({
-  products: initialProducts,
-  clients: load('clients', demoData.clients || []),
-  sales: load('sales', demoData.sales || []),
-  debts: load('debts', demoData.debts || []),
+  // Initial state loaded from cache (No mock demo data)
+  products: load('products', []),
+  clients: load('clients', []),
+  sales: load('sales', []),
+  debts: load('debts', []),
   pendingSales: load('pending_sales', []),
 
   config: load('config', {
@@ -84,538 +63,794 @@ const store = reactive({
   }),
 
   notifications: [],
+  isLoading: false,
+  isInitialized: false,
+
+  // ============ INITIALIZE & SYNC WITH BACKEND ============
+  async init() {
+    const token = localStorage.getItem('trueno_token');
+    if (!token) return;
+
+    this.isLoading = true;
+    try {
+      const [productsData, clientsData, salesData, debtsData, pendingData, configData] =
+        await Promise.allSettled([
+          ProductsService.getAll({ all: 'true' }),
+          ClientsService.getAll({ all: 'true' }),
+          SalesService.getAll({ all: 'true' }),
+          DebtsService.getAll({ all: 'true' }),
+          PendingSalesService.getAll(),
+          SettingsService.getSettings(),
+        ]);
+
+      if (productsData.status === 'fulfilled' && Array.isArray(productsData.value)) {
+        this.products = productsData.value.map((p) => ({
+          ...p,
+          id: p.originalId !== undefined ? p.originalId : p.id || p._id,
+          stock: Math.max(0, Number(p.stock) || 0),
+          warehouseStock: Math.max(0, Number(p.warehouseStock) || 0),
+          minStock: Number(p.minStock) || 5,
+          buyPrice: Number(p.buyPrice ?? p.buy_price) || 0,
+          sellPrice: Number(p.sellPrice ?? p.sell_price) || 0,
+        }));
+        this.saveProducts();
+      }
+
+      if (clientsData.status === 'fulfilled' && Array.isArray(clientsData.value)) {
+        this.clients = clientsData.value.map((c) => ({
+          ...c,
+          id: c.originalId !== undefined ? c.originalId : c.id || c._id,
+        }));
+        this.saveClients();
+      }
+
+      if (salesData.status === 'fulfilled' && Array.isArray(salesData.value)) {
+        this.sales = salesData.value.map((s) => ({
+          ...s,
+          id: s.originalId !== undefined ? s.originalId : s.id || s._id,
+        }));
+        this.saveSales();
+      }
+
+      if (debtsData.status === 'fulfilled' && Array.isArray(debtsData.value)) {
+        this.debts = debtsData.value.map((d) => ({
+          ...d,
+          id: d.originalId !== undefined ? d.originalId : d.id || d._id,
+        }));
+        this.saveDebts();
+      }
+
+      if (pendingData.status === 'fulfilled' && Array.isArray(pendingData.value)) {
+        this.pendingSales = pendingData.value.map((ps) => ({
+          ...ps,
+          id: ps.originalId !== undefined ? ps.originalId : ps.id || ps._id,
+        }));
+        this.savePendingSales();
+      }
+
+      if (configData.status === 'fulfilled' && configData.value) {
+        Object.assign(this.config, configData.value);
+        persist('config', this.config);
+      }
+
+      this.updateDebtStatuses();
+      this.isInitialized = true;
+    } catch (err) {
+      console.error('[Store Init Error] Sincronización fallida:', err);
+    } finally {
+      this.isLoading = false;
+    }
+  },
 
   // ============ PRODUCTS ============
-  addProduct(product) {
-    const p = {
+  async addProduct(product) {
+    const tempId = nextId('product');
+    const localProduct = {
       ...product,
-      id: nextId('product'),
+      id: tempId,
       stock: Math.max(0, Number(product.stock) || 0),
       warehouseStock: Math.max(0, Number(product.warehouseStock) || 0),
       totalSold: 0,
       createdAt: new Date().toISOString(),
+    };
+
+    // Optimistic local add
+    this.products.unshift(localProduct);
+    this.saveProducts();
+    this.notify('Guardando producto en la base de datos...', 'info');
+
+    try {
+      const created = await ProductsService.create(product);
+      if (created) {
+        const normalized = {
+          ...created,
+          id: created.originalId !== undefined ? created.originalId : created.id || created._id,
+          stock: Math.max(0, Number(created.stock) || 0),
+          warehouseStock: Math.max(0, Number(created.warehouseStock) || 0),
+        };
+        const idx = this.products.findIndex((p) => p.id === tempId);
+        if (idx !== -1) {
+          this.products[idx] = normalized;
+        }
+        this.saveProducts();
+        this.notify('Producto registrado en MongoDB correctamente', 'success');
+        return normalized;
+      }
+    } catch (err) {
+      console.error('Error al crear producto en backend:', err);
+      this.notify(err.message || 'Error al guardar el producto en el servidor', 'danger');
     }
-    this.products.push(p)
-    this.saveProducts()
-    this.notify('Producto agregado al inventario', 'success')
-    return p
+    return localProduct;
   },
 
-  updateProduct(id, data) {
-    const idx = this.products.findIndex(p => p.id === id)
+  async updateProduct(id, data) {
+    const idx = this.products.findIndex((p) => p.id === id || p._id === id);
     if (idx !== -1) {
-      const current = this.products[idx]
-      this.products[idx] = {
+      const current = this.products[idx];
+      const updatedLocal = {
         ...current,
         ...data,
         stock: Math.max(0, Number(data.stock !== undefined ? data.stock : current.stock) || 0),
-        warehouseStock: Math.max(0, Number(data.warehouseStock !== undefined ? data.warehouseStock : current.warehouseStock) || 0),
+        warehouseStock: Math.max(
+          0,
+          Number(data.warehouseStock !== undefined ? data.warehouseStock : current.warehouseStock) || 0
+        ),
         updatedAt: new Date().toISOString(),
+      };
+      this.products[idx] = updatedLocal;
+      this.saveProducts();
+
+      try {
+        const backendTargetId = current._id || id;
+        const result = await ProductsService.update(backendTargetId, data);
+        if (result) {
+          this.products[idx] = {
+            ...result,
+            id: result.originalId !== undefined ? result.originalId : result.id || result._id,
+          };
+          this.saveProducts();
+        }
+        this.notify('Producto actualizado', 'success');
+      } catch (err) {
+        console.error('Error actualizando producto en backend:', err);
+        this.notify(err.message || 'Error al actualizar producto en el servidor', 'danger');
       }
-      this.saveProducts()
-      this.notify('Producto actualizado', 'success')
     }
   },
 
-  deleteProduct(id) {
-    const idx = this.products.findIndex(p => p.id === id)
+  async deleteProduct(id) {
+    const idx = this.products.findIndex((p) => p.id === id || p._id === id);
     if (idx !== -1) {
-      this.products.splice(idx, 1)
-      this.saveProducts()
-      this.notify('Producto eliminado', 'info')
+      const target = this.products[idx];
+      this.products.splice(idx, 1);
+      this.saveProducts();
+      this.notify('Producto eliminado', 'info');
+
+      try {
+        const backendTargetId = target._id || id;
+        await ProductsService.delete(backendTargetId);
+      } catch (err) {
+        console.error('Error eliminando producto en backend:', err);
+        this.notify(err.message || 'Error al eliminar producto en el servidor', 'danger');
+      }
     }
   },
 
-  // Ajustar stock disponible en tienda
-  adjustStock(id, delta) {
-    const p = this.products.find(p => p.id === id)
+  async adjustStock(id, delta) {
+    const p = this.products.find((prod) => prod.id === id || prod._id === id);
     if (p) {
-      const newStock = (Number(p.stock) || 0) + delta
-      if (newStock < 0) return false
-      p.stock = newStock
-      p.updatedAt = new Date().toISOString()
-      this.saveProducts()
-      return true
+      const newStock = (Number(p.stock) || 0) + delta;
+      if (newStock < 0) return false;
+      p.stock = newStock;
+      p.updatedAt = new Date().toISOString();
+      this.saveProducts();
+
+      try {
+        const targetId = p._id || id;
+        await ProductsService.adjustStock(targetId, delta, 'store', 'Ajuste desde tienda');
+      } catch (err) {
+        console.warn('Ajuste de stock no sincronizado con backend:', err.message);
+      }
+      return true;
     }
-    return false
+    return false;
   },
 
-  // Ajustar stock en bodega
-  adjustWarehouseStock(id, delta) {
-    const p = this.products.find(p => p.id === id)
+  async adjustWarehouseStock(id, delta) {
+    const p = this.products.find((prod) => prod.id === id || prod._id === id);
     if (p) {
-      const newWarehouse = (Number(p.warehouseStock) || 0) + delta
-      if (newWarehouse < 0) return false
-      p.warehouseStock = newWarehouse
-      p.updatedAt = new Date().toISOString()
-      this.saveProducts()
-      return true
+      const newWarehouse = (Number(p.warehouseStock) || 0) + delta;
+      if (newWarehouse < 0) return false;
+      p.warehouseStock = newWarehouse;
+      p.updatedAt = new Date().toISOString();
+      this.saveProducts();
+
+      try {
+        const targetId = p._id || id;
+        await ProductsService.adjustStock(targetId, delta, 'warehouse', 'Ajuste en bodega');
+      } catch (err) {
+        console.warn('Ajuste de bodega no sincronizado con backend:', err.message);
+      }
+      return true;
     }
-    return false
+    return false;
   },
 
-  // Trasladar stock entre bodega y tienda
-  transferStock(id, from, to, amount = 1) {
-    const p = this.products.find(p => p.id === id)
-    if (!p) return false
-    const qty = Math.max(1, parseInt(amount) || 1)
-    p.stock = Math.max(0, Number(p.stock) || 0)
-    p.warehouseStock = Math.max(0, Number(p.warehouseStock) || 0)
+  async transferStock(id, from, to, amount = 1) {
+    const p = this.products.find((prod) => prod.id === id || prod._id === id);
+    if (!p) return false;
+    const qty = Math.max(1, parseInt(amount) || 1);
+    p.stock = Math.max(0, Number(p.stock) || 0);
+    p.warehouseStock = Math.max(0, Number(p.warehouseStock) || 0);
 
     if (from === 'warehouse' && to === 'store') {
       if (p.warehouseStock < qty) {
-        this.notify(`No hay suficiente cantidad en bodega (disponible en bodega: ${p.warehouseStock})`, 'warning')
-        return false
+        this.notify(`No hay suficiente cantidad en bodega (disponible: ${p.warehouseStock})`, 'warning');
+        return false;
       }
-      p.warehouseStock -= qty
-      p.stock += qty
-      p.updatedAt = new Date().toISOString()
-      this.saveProducts()
-      this.notify(`Se pasaron ${qty} unidad(es) de Bodega a Tienda (${p.name})`, 'success')
-      return true
+      p.warehouseStock -= qty;
+      p.stock += qty;
+      p.updatedAt = new Date().toISOString();
+      this.saveProducts();
+      this.notify(`Se pasaron ${qty} unidad(es) de Bodega a Tienda (${p.name})`, 'success');
+
+      try {
+        const targetId = p._id || id;
+        await ProductsService.transferStock(targetId, from, to, qty, `Traslado de ${qty} unidad(es)`);
+      } catch (err) {
+        console.warn('Traslado no sincronizado con backend:', err.message);
+      }
+      return true;
     } else if (from === 'store' && to === 'warehouse') {
       if (p.stock < qty) {
-        this.notify(`No hay suficiente cantidad en tienda (disponible en tienda: ${p.stock})`, 'warning')
-        return false
+        this.notify(`No hay suficiente cantidad en tienda (disponible: ${p.stock})`, 'warning');
+        return false;
       }
-      p.stock -= qty
-      p.warehouseStock += qty
-      p.updatedAt = new Date().toISOString()
-      this.saveProducts()
-      this.notify(`Se pasaron ${qty} unidad(es) de Tienda a Bodega (${p.name})`, 'success')
-      return true
+      p.stock -= qty;
+      p.warehouseStock += qty;
+      p.updatedAt = new Date().toISOString();
+      this.saveProducts();
+      this.notify(`Se pasaron ${qty} unidad(es) de Tienda a Bodega (${p.name})`, 'success');
+
+      try {
+        const targetId = p._id || id;
+        await ProductsService.transferStock(targetId, from, to, qty, `Traslado de ${qty} unidad(es)`);
+      } catch (err) {
+        console.warn('Traslado no sincronizado con backend:', err.message);
+      }
+      return true;
     }
-    return false
+    return false;
   },
 
   getProductById(id) {
-    return this.products.find(p => p.id === id) || null
+    return this.products.find((p) => p.id === id || p._id === id) || null;
   },
 
   saveProducts() {
-    persist('products', this.products)
+    persist('products', this.products);
   },
 
   // ============ CLIENTS ============
-  addClient(client) {
-    // Validate unique document
+  async addClient(client) {
     if (client.document && client.document.trim()) {
-      const existing = this.clients.find(c => c.document === client.document.trim())
+      const existing = this.clients.find((c) => c.document === client.document.trim());
       if (existing) {
-        this.notify(`Ya existe un cliente con documento ${client.document}: ${existing.name}`, 'warning')
-        return null
+        this.notify(`Ya existe un cliente con documento ${client.document}: ${existing.name}`, 'warning');
+        return null;
       }
     }
-    const c = {
+
+    const tempId = nextId('client');
+    const localClient = {
       ...client,
-      id: nextId('client'),
+      id: tempId,
       document: (client.document || '').trim(),
       totalBought: 0,
       createdAt: new Date().toISOString(),
+    };
+    this.clients.unshift(localClient);
+    this.saveClients();
+
+    try {
+      const created = await ClientsService.create(client);
+      if (created) {
+        const normalized = {
+          ...created,
+          id: created.originalId !== undefined ? created.originalId : created.id || created._id,
+        };
+        const idx = this.clients.findIndex((c) => c.id === tempId);
+        if (idx !== -1) {
+          this.clients[idx] = normalized;
+        }
+        this.saveClients();
+        this.notify('Cliente registrado exitosamente', 'success');
+        return normalized;
+      }
+    } catch (err) {
+      console.error('Error creando cliente en backend:', err);
+      this.notify(err.message || 'Error al guardar cliente en el servidor', 'danger');
     }
-    this.clients.push(c)
-    this.saveClients()
-    this.notify('Cliente registrado', 'success')
-    return c
+    return localClient;
   },
 
-  updateClient(id, data) {
-    const idx = this.clients.findIndex(c => c.id === id)
+  async updateClient(id, data) {
+    const idx = this.clients.findIndex((c) => c.id === id || c._id === id);
     if (idx !== -1) {
-      this.clients[idx] = { ...this.clients[idx], ...data, updatedAt: new Date().toISOString() }
-      this.saveClients()
-      this.notify('Cliente actualizado', 'success')
+      const current = this.clients[idx];
+      this.clients[idx] = { ...current, ...data, updatedAt: new Date().toISOString() };
+      this.saveClients();
+
+      try {
+        const targetId = current._id || id;
+        const updated = await ClientsService.update(targetId, data);
+        if (updated) {
+          this.clients[idx] = {
+            ...updated,
+            id: updated.originalId !== undefined ? updated.originalId : updated.id || updated._id,
+          };
+          this.saveClients();
+        }
+        this.notify('Cliente actualizado', 'success');
+      } catch (err) {
+        console.error('Error actualizando cliente en backend:', err);
+        this.notify(err.message || 'Error al actualizar cliente', 'danger');
+      }
     }
   },
 
-  deleteClient(id) {
-    const idx = this.clients.findIndex(c => c.id === id)
+  async deleteClient(id) {
+    const idx = this.clients.findIndex((c) => c.id === id || c._id === id);
     if (idx !== -1) {
-      this.clients.splice(idx, 1)
-      this.saveClients()
-      this.notify('Cliente eliminado', 'info')
+      const target = this.clients[idx];
+      this.clients.splice(idx, 1);
+      this.saveClients();
+      this.notify('Cliente eliminado', 'info');
+
+      try {
+        const targetId = target._id || id;
+        await ClientsService.delete(targetId);
+      } catch (err) {
+        console.error('Error eliminando cliente en backend:', err);
+        this.notify(err.message || 'Error al eliminar cliente en el servidor', 'danger');
+      }
     }
   },
 
   getClientById(id) {
-    return this.clients.find(c => c.id === id) || null
+    return this.clients.find((c) => c.id === id || c._id === id) || null;
   },
 
   getClientByDocument(doc) {
-    if (!doc) return null
-    return this.clients.find(c => c.document === doc.trim()) || null
+    if (!doc) return null;
+    return this.clients.find((c) => c.document === doc.trim()) || null;
   },
 
   saveClients() {
-    persist('clients', this.clients)
+    persist('clients', this.clients);
   },
 
   // ============ SALES ============
-  registerSale({ items, clientId, clientName, clientDocument, paymentMethod, paid, total: passedTotal, discount = 0, interestRate = 0 }) {
+  async registerSale({
+    items,
+    clientId,
+    clientName,
+    clientDocument,
+    paymentMethod,
+    paid,
+    total: passedTotal,
+    discount = 0,
+    interestRate = 0,
+  }) {
     if (!items || !items.length) {
-      this.notify('El carrito no contiene productos', 'warning')
-      return null
+      this.notify('El carrito no contiene productos', 'warning');
+      return null;
     }
 
-    // Verify product existence and stock
+    // Verify stock locally
     for (const item of items) {
-      const product = this.products.find(p => p.id === item.productId)
+      const product = this.products.find((p) => p.id === item.productId || p._id === item.productId);
       if (!product) {
-        this.notify(`Producto no encontrado: ${item.name}`, 'danger')
-        return null
+        this.notify(`Producto no encontrado: ${item.name}`, 'danger');
+        return null;
       }
       if (product.stock < item.qty) {
-        this.notify(`Stock insuficiente para: ${item.name} (disponibles: ${product.stock})`, 'danger')
-        return null
+        this.notify(`Stock insuficiente para: ${item.name} (disponibles: ${product.stock})`, 'danger');
+        return null;
       }
     }
 
-    const itemsSubtotal = items.reduce((s, i) => s + (Number(i.subtotal) || 0), 0)
-    const finalDiscount = Math.max(0, Number(discount) || 0)
-    const baseTotal = passedTotal !== undefined ? Math.max(0, Number(passedTotal) || 0) : Math.max(0, itemsSubtotal - finalDiscount)
+    const itemsSubtotal = items.reduce((s, i) => s + (Number(i.subtotal) || 0), 0);
+    const finalDiscount = Math.max(0, Number(discount) || 0);
+    const baseTotal =
+      passedTotal !== undefined
+        ? Math.max(0, Number(passedTotal) || 0)
+        : Math.max(0, itemsSubtotal - finalDiscount);
 
-    // Apply interest for credit sales
-    const finalInterestRate = paymentMethod === 'Crédito' ? Math.max(0, Math.min(100, Number(interestRate) || 0)) : 0
-    const interestAmount = finalInterestRate > 0 ? Math.round(baseTotal * finalInterestRate / 100) : 0
-    const finalTotal = baseTotal + interestAmount
+    const finalInterestRate =
+      paymentMethod === 'Crédito' ? Math.max(0, Math.min(100, Number(interestRate) || 0)) : 0;
+    const interestAmount =
+      finalInterestRate > 0 ? Math.round((baseTotal * finalInterestRate) / 100) : 0;
+    const finalTotal = baseTotal + interestAmount;
+    const paidAmount =
+      paymentMethod === 'Crédito' ? Math.max(0, Math.min(finalTotal, Number(paid) || 0)) : finalTotal;
 
-    const paidAmount = paymentMethod === 'Crédito' ? Math.max(0, Math.min(finalTotal, Number(paid) || 0)) : finalTotal
-
-    // Check if there is an existing same-day sale for this registered client to accumulate
-    let existingSale = null
-    if (clientId) {
-      const today = new Date().toDateString()
-      existingSale = this.sales.find(s =>
-        s.clientId === Number(clientId) &&
-        new Date(s.date).toDateString() === today &&
-        s.status !== 'pendiente' &&
-        s.paymentMethod === paymentMethod &&
-        paymentMethod !== 'Crédito' // Credit sales are always separate since they have debts
-      )
-    }
-
-    // Deduct stock safely
-    items.forEach(item => {
-      const p = this.products.find(p => p.id === item.productId)
-      if (p) {
-        p.stock = Math.max(0, p.stock - item.qty)
-        p.totalSold = (Number(p.totalSold) || 0) + item.qty
-        if (p.stock <= 0) this.notify(`${p.name} está AGOTADO`, 'danger')
-        else if (p.stock <= (p.minStock || this.config.lowStockThreshold))
-          this.notify(`Stock bajo: ${p.name} — quedan ${p.stock}`, 'warning')
-      }
-    })
-    this.saveProducts()
-
-    // Update client total
-    if (clientId) {
-      const client = this.clients.find(c => c.id === Number(clientId))
-      if (client) {
-        client.totalBought = (Number(client.totalBought) || 0) + finalTotal
-        this.saveClients()
-      }
-    }
-
-    // Accumulate to existing sale if applicable
-    if (existingSale) {
-      // Merge items: add quantities for existing products, add new products
-      items.forEach(newItem => {
-        const existingItem = existingSale.items.find(ei => ei.productId === newItem.productId)
-        if (existingItem) {
-          existingItem.qty += newItem.qty
-          existingItem.subtotal = existingItem.qty * existingItem.price
-        } else {
-          existingSale.items.push({ ...newItem })
-        }
-      })
-      existingSale.subtotal = existingSale.items.reduce((s, i) => s + (Number(i.subtotal) || 0), 0)
-      existingSale.discount = (Number(existingSale.discount) || 0) + finalDiscount
-      existingSale.total = (Number(existingSale.total) || 0) + finalTotal
-      existingSale.paid = existingSale.total
-      existingSale.date = new Date().toISOString() // Update timestamp
-      this.saveSales()
-      this.notify('Venta acumulada al cliente correctamente', 'success')
-      return existingSale
-    }
-
-    // Create new sale
-    const sale = {
-      id: nextId('sale'),
-      clientId: clientId ? Number(clientId) : null,
-      clientName: clientName || 'Cliente General',
+    const salePayload = {
+      clientId,
+      clientName: clientName || 'Consumidor Final',
       clientDocument: clientDocument || '',
-      items: items.map(i => ({ ...i })),
+      items: items.map((i) => ({
+        productId: i.productId,
+        name: i.name,
+        price: Number(i.price) || 0,
+        qty: Number(i.qty) || 1,
+        subtotal: Number(i.subtotal) || 0,
+      })),
       subtotal: itemsSubtotal,
       discount: finalDiscount,
       total: finalTotal,
-      baseTotal: baseTotal,
+      baseTotal,
       interestRate: finalInterestRate,
-      interestAmount: interestAmount,
+      interestAmount,
       paid: paidAmount,
       paymentMethod,
-      status: paidAmount >= finalTotal ? 'pagada' : 'pendiente',
-      date: new Date().toISOString(),
-      debt: null,
-    }
+    };
 
-    // Create debt if credit
-    if (paymentMethod === 'Crédito' && paidAmount < finalTotal) {
-      const debt = this.createDebt({
-        saleId: sale.id,
-        clientId: clientId ? Number(clientId) : null,
-        clientName: clientName || 'Cliente General',
-        clientDocument: clientDocument || '',
-        total: finalTotal,
-        baseTotal: baseTotal,
-        interestRate: finalInterestRate,
-        interestAmount: interestAmount,
-        paid: paidAmount,
-        items,
-      })
-      sale.debt = debt.id
-    }
+    try {
+      const result = await SalesService.registerSale(salePayload);
+      const savedSale = result?.sale || result;
+      const normalizedSale = {
+        ...savedSale,
+        id: savedSale.originalId !== undefined ? savedSale.originalId : savedSale.id || savedSale._id,
+      };
 
-    this.sales.push(sale)
-    this.saveSales()
-    this.notify('Venta registrada correctamente', 'success')
-    return sale
+      // Deduct stock in local state
+      items.forEach((item) => {
+        const p = this.products.find((prod) => prod.id === item.productId || prod._id === item.productId);
+        if (p) {
+          p.stock = Math.max(0, p.stock - item.qty);
+          p.totalSold = (Number(p.totalSold) || 0) + item.qty;
+        }
+      });
+      this.saveProducts();
+
+      // Update client total bought
+      if (clientId) {
+        const client = this.clients.find((c) => c.id === clientId || c._id === clientId);
+        if (client) {
+          client.totalBought = (Number(client.totalBought) || 0) + finalTotal;
+          this.saveClients();
+        }
+      }
+
+      // Add debt if credit and debt returned
+      if (result?.debt) {
+        const debtObj = {
+          ...result.debt,
+          id: result.debt.originalId !== undefined ? result.debt.originalId : result.debt.id || result.debt._id,
+        };
+        this.debts.unshift(debtObj);
+        this.saveDebts();
+      }
+
+      this.sales.unshift(normalizedSale);
+      this.saveSales();
+      this.notify('Venta registrada correctamente en el sistema', 'success');
+      return normalizedSale;
+    } catch (err) {
+      console.error('Error registrando venta en backend:', err);
+      this.notify(err.message || 'Error al procesar la venta en el servidor', 'danger');
+      return null;
+    }
+  },
+
+  async cancelSale(id, reason = 'Anulada por usuario') {
+    const sale = this.sales.find((s) => s.id === id || s._id === id);
+    if (!sale) return;
+
+    try {
+      const targetId = sale._id || id;
+      await SalesService.cancelSale(targetId, reason);
+      sale.status = 'anulada';
+
+      // Restore local stock
+      sale.items.forEach((item) => {
+        const p = this.products.find((prod) => prod.id === item.productId || prod._id === item.productId);
+        if (p) {
+          p.stock += item.qty;
+          p.totalSold = Math.max(0, (p.totalSold || 0) - item.qty);
+        }
+      });
+
+      this.saveProducts();
+      this.saveSales();
+      this.notify('Venta anulada correctamente', 'success');
+    } catch (err) {
+      console.error('Error anulando venta:', err);
+      this.notify(err.message || 'Error al anular la venta', 'danger');
+    }
   },
 
   saveSales() {
-    persist('sales', this.sales)
+    persist('sales', this.sales);
   },
 
   // ============ PENDING SALES ============
-  savePendingSale(saleData) {
+  async savePendingSale(saleData) {
     if (saleData.id) {
-      const idx = this.pendingSales.findIndex(p => p.id === saleData.id)
+      const idx = this.pendingSales.findIndex((p) => p.id === saleData.id || p._id === saleData.id);
       if (idx !== -1) {
         this.pendingSales[idx] = {
           ...this.pendingSales[idx],
           ...saleData,
           status: 'PENDIENTE',
           updatedAt: new Date().toISOString(),
+        };
+        this.savePendingSales();
+
+        try {
+          const targetId = this.pendingSales[idx]._id || saleData.id;
+          await PendingSalesService.update(targetId, saleData);
+        } catch (e) {
+          console.warn('Pending sale update error:', e.message);
         }
-        this.savePendingSales()
-        this.notify(`Venta pendiente #${saleData.id} actualizada`, 'success')
-        return this.pendingSales[idx]
+
+        this.notify(`Venta pendiente #${saleData.id} actualizada`, 'success');
+        return this.pendingSales[idx];
       }
     }
 
-    const pendingNum = nextId('pending_sale')
-    const formattedId = `PEND-${String(pendingNum).padStart(3, '0')}`
-    const pending = {
+    const pendingNum = nextId('pending_sale');
+    const formattedId = `PEND-${String(pendingNum).padStart(3, '0')}`;
+    const pendingLocal = {
       ...saleData,
       id: formattedId,
       status: 'PENDIENTE',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+    };
+
+    this.pendingSales.unshift(pendingLocal);
+    this.savePendingSales();
+
+    try {
+      const created = await PendingSalesService.create(saleData);
+      if (created) {
+        const normalized = {
+          ...created,
+          id: created.originalId !== undefined ? created.originalId : created.id || created._id,
+        };
+        const idx = this.pendingSales.findIndex((p) => p.id === formattedId);
+        if (idx !== -1) {
+          this.pendingSales[idx] = normalized;
+        }
+        this.savePendingSales();
+      }
+    } catch (e) {
+      console.warn('Pending sale create error:', e.message);
     }
-    this.pendingSales.unshift(pending)
-    this.savePendingSales()
-    this.notify(`Venta guardada como pendiente (#${pending.id})`, 'success')
-    return pending
+
+    this.notify(`Venta guardada como pendiente`, 'success');
+    return pendingLocal;
   },
 
-  deletePendingSale(id) {
-    const idx = this.pendingSales.findIndex(p => p.id === id)
-    if (idx !== -1) {
-      const removed = this.pendingSales.splice(idx, 1)[0]
-      this.savePendingSales()
-      this.notify(`Venta pendiente #${id} eliminada`, 'info')
-      return removed
+  async confirmPendingSale(id, paymentMethod = 'Efectivo', paid) {
+    const idx = this.pendingSales.findIndex((p) => p.id === id || p._id === id);
+    if (idx === -1) return;
+
+    const pending = this.pendingSales[idx];
+    try {
+      const targetId = pending._id || id;
+      const result = await PendingSalesService.confirm(targetId, paymentMethod, paid);
+      this.pendingSales.splice(idx, 1);
+      this.savePendingSales();
+
+      if (result?.sale) {
+        const normalized = {
+          ...result.sale,
+          id: result.sale.originalId !== undefined ? result.sale.originalId : result.sale.id || result.sale._id,
+        };
+        this.sales.unshift(normalized);
+        this.saveSales();
+      }
+
+      // Refresh products to ensure correct stock
+      await this.init();
+      this.notify('Venta en espera confirmada y procesada', 'success');
+    } catch (err) {
+      console.error('Error confirmando venta pendiente:', err);
+      this.notify(err.message || 'Error al confirmar venta pendiente', 'danger');
     }
-    return null
+  },
+
+  async deletePendingSale(id) {
+    const idx = this.pendingSales.findIndex((p) => p.id === id || p._id === id);
+    if (idx !== -1) {
+      const target = this.pendingSales[idx];
+      this.pendingSales.splice(idx, 1);
+      this.savePendingSales();
+      this.notify(`Venta pendiente eliminada`, 'info');
+
+      try {
+        const targetId = target._id || id;
+        await PendingSalesService.delete(targetId);
+      } catch (err) {
+        console.warn('Error eliminando venta pendiente en servidor:', err.message);
+      }
+    }
   },
 
   getPendingSaleById(id) {
-    return this.pendingSales.find(p => p.id === id) || null
+    return this.pendingSales.find((p) => p.id === id || p._id === id) || null;
   },
 
   savePendingSales() {
-    persist('pending_sales', this.pendingSales)
+    persist('pending_sales', this.pendingSales);
   },
 
   // ============ DEBTS ============
-  createDebt({ saleId, clientId, clientName, clientDocument, total, baseTotal, interestRate, interestAmount, paid, items }) {
-    const dueDate = new Date()
-    dueDate.setDate(dueDate.getDate() + 30)
-    const numTotal = Number(total) || 0
-    const numPaid = Number(paid) || 0
-
-    const debt = {
-      id: nextId('debt'),
-      saleId,
-      clientId: clientId ? Number(clientId) : null,
-      clientName: clientName || 'Cliente General',
-      clientDocument: clientDocument || '',
-      total: numTotal,
-      baseTotal: Number(baseTotal) || numTotal,
-      interestRate: Number(interestRate) || 0,
-      interestAmount: Number(interestAmount) || 0,
-      paid: numPaid,
-      balance: Math.max(0, numTotal - numPaid),
-      dueDate: dueDate.toISOString(),
-      status: 'pendiente',
-      createdAt: new Date().toISOString(),
-      payments: numPaid > 0 ? [{ id: nextId('payment'), amount: numPaid, date: new Date().toISOString(), note: 'Pago inicial' }] : [],
-      items: items ? items.map(i => ({ ...i })) : [],
-    }
-    this.debts.push(debt)
-    this.saveDebts()
-    return debt
-  },
-
-  addPayment(debtId, amount, note = '') {
-    const debt = this.debts.find(d => d.id === debtId)
-    if (!debt) return
-    const numAmount = Number(amount) || 0
+  async addPayment(debtId, amount, note = '') {
+    const debt = this.debts.find((d) => d.id === debtId || d._id === debtId);
+    if (!debt) return;
+    const numAmount = Number(amount) || 0;
     if (numAmount <= 0) {
-      this.notify('El abono debe ser mayor a 0', 'warning')
-      return
+      this.notify('El abono debe ser mayor a 0', 'warning');
+      return;
     }
     if (numAmount > debt.balance) {
-      this.notify('El abono supera el saldo pendiente', 'warning')
-      return
+      this.notify('El abono supera el saldo pendiente', 'warning');
+      return;
     }
-    const now = new Date().toISOString()
-    debt.paid = (Number(debt.paid) || 0) + numAmount
-    debt.balance = Math.max(0, (Number(debt.balance) || 0) - numAmount)
-    debt.payments.push({ id: nextId('payment'), amount: numAmount, date: now, note })
-    debt.updatedAt = now
 
-    // Always sync the sale's paid field with the new payment amount
-    const sale = this.sales.find(s => s.id === debt.saleId)
+    const now = new Date().toISOString();
+    debt.paid = (Number(debt.paid) || 0) + numAmount;
+    debt.balance = Math.max(0, (Number(debt.balance) || 0) - numAmount);
+    if (!debt.payments) debt.payments = [];
+    debt.payments.push({ id: nextId('payment'), amount: numAmount, date: now, note });
+    debt.updatedAt = now;
+
+    // Sync sale paid amount
+    const sale = this.sales.find((s) => s.id === debt.saleId || s._id === debt.saleId);
     if (sale) {
-      sale.paid = Math.min(sale.total, (Number(sale.paid) || 0) + numAmount)
-      sale.updatedAt = now
+      sale.paid = Math.min(sale.total, (Number(sale.paid) || 0) + numAmount);
+      sale.updatedAt = now;
+      if (debt.balance <= 0) {
+        sale.status = 'pagada';
+        sale.paid = sale.total;
+      }
+      this.saveSales();
     }
 
     if (debt.balance <= 0) {
-      debt.balance = 0
-      debt.status = 'pagada'
-      if (sale) { sale.status = 'pagada'; sale.paid = sale.total }
-      this.notify('Deuda pagada completamente', 'success')
+      debt.status = 'pagada';
+      this.notify('Deuda pagada completamente', 'success');
     } else {
-      this.notify('Abono registrado correctamente', 'success')
+      this.notify('Abono registrado correctamente', 'success');
     }
 
-    this.saveSales()
-    this.updateDebtStatuses()
-    this.saveDebts()
+    this.saveDebts();
+
+    try {
+      const targetId = debt._id || debtId;
+      await DebtsService.addPayment(targetId, numAmount, 'Efectivo', note);
+    } catch (err) {
+      console.warn('Error registrando abono en backend:', err.message);
+    }
   },
 
   updateDebtStatuses() {
-    const now = new Date()
-    this.debts.forEach(d => {
+    const now = new Date();
+    this.debts.forEach((d) => {
       if (d.status === 'pendiente' && new Date(d.dueDate) < now) {
-        d.status = 'vencida'
+        d.status = 'vencida';
       }
-    })
+    });
   },
 
   saveDebts() {
-    persist('debts', this.debts)
+    persist('debts', this.debts);
   },
 
   // ============ CONFIG ============
-  updateConfig(cfg) {
-    Object.assign(this.config, cfg)
-    persist('config', this.config)
-    this.notify('Configuración guardada', 'success')
+  async updateConfig(cfg) {
+    Object.assign(this.config, cfg);
+    persist('config', this.config);
+    this.notify('Configuración guardada', 'success');
+
+    try {
+      await SettingsService.updateSettings(cfg);
+    } catch (err) {
+      console.warn('Error guardando configuración en backend:', err.message);
+    }
   },
 
   // ============ NOTIFICATIONS ============
   notify(message, type = 'info') {
-    const id = Date.now()
-    this.notifications.push({ id, message, type })
+    const id = Date.now();
+    this.notifications.push({ id, message, type });
     setTimeout(() => {
-      const idx = this.notifications.findIndex(n => n.id === id)
-      if (idx !== -1) this.notifications.splice(idx, 1)
-    }, 4000)
+      const idx = this.notifications.findIndex((n) => n.id === id);
+      if (idx !== -1) this.notifications.splice(idx, 1);
+    }, 4000);
   },
 
   // ============ COMPUTED STATS ============
-  get totalProducts() { return this.products.length },
-  get totalStoreStock() { return this.products.reduce((s, p) => s + (Number(p.stock) || 0), 0) },
-  get totalWarehouseStock() { return this.products.reduce((s, p) => s + (Number(p.warehouseStock) || 0), 0) },
-  get totalInventoryUnits() { return this.totalStoreStock + this.totalWarehouseStock },
-  get lowStockProducts() {
-    return this.products.filter(p => (Number(p.stock) || 0) > 0 && (Number(p.stock) || 0) <= (p.minStock || this.config.lowStockThreshold))
+  get totalProducts() {
+    return this.products.length;
   },
-  get outOfStockProducts() { return this.products.filter(p => (Number(p.stock) || 0) <= 0) },
-  get outOfAllStockProducts() { return this.products.filter(p => (Number(p.stock) || 0) <= 0 && (Number(p.warehouseStock) || 0) <= 0) },
-  get totalClients() { return this.clients.length },
+  get totalStoreStock() {
+    return this.products.reduce((s, p) => s + (Number(p.stock) || 0), 0);
+  },
+  get totalWarehouseStock() {
+    return this.products.reduce((s, p) => s + (Number(p.warehouseStock) || 0), 0);
+  },
+  get totalInventoryUnits() {
+    return this.totalStoreStock + this.totalWarehouseStock;
+  },
+  get lowStockProducts() {
+    return this.products.filter(
+      (p) =>
+        (Number(p.stock) || 0) > 0 &&
+        (Number(p.stock) || 0) <= (p.minStock || this.config.lowStockThreshold || 5)
+    );
+  },
+  get outOfStockProducts() {
+    return this.products.filter((p) => (Number(p.stock) || 0) <= 0);
+  },
+  get outOfAllStockProducts() {
+    return this.products.filter(
+      (p) => (Number(p.stock) || 0) <= 0 && (Number(p.warehouseStock) || 0) <= 0
+    );
+  },
+  get totalClients() {
+    return this.clients.length;
+  },
   get totalPendingDebt() {
-    return this.debts.filter(d => d.status !== 'pagada').reduce((s, d) => s + d.balance, 0)
+    return this.debts
+      .filter((d) => d.status !== 'pagada')
+      .reduce((s, d) => s + (Number(d.balance) || 0), 0);
   },
   get todaySales() {
-    const today = new Date().toDateString()
-    return this.sales.filter(s => new Date(s.date).toDateString() === today)
+    const today = new Date().toDateString();
+    return this.sales.filter((s) => new Date(s.date || s.createdAt).toDateString() === today);
   },
-  get todayTotal() { return this.todaySales.reduce((s, v) => s + v.total, 0) },
+  get todayTotal() {
+    return this.todaySales.reduce((s, v) => s + (Number(v.total) || 0), 0);
+  },
   get monthSales() {
-    const now = new Date()
-    return this.sales.filter(s => {
-      const d = new Date(s.date)
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
-    })
+    const now = new Date();
+    return this.sales.filter((s) => {
+      const d = new Date(s.date || s.createdAt);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
   },
-  get monthTotal() { return this.monthSales.reduce((s, v) => s + v.total, 0) },
+  get monthTotal() {
+    return this.monthSales.reduce((s, v) => s + (Number(v.total) || 0), 0);
+  },
   get topProducts() {
-    const map = {}
-    this.sales.forEach(sale => {
-      sale.items.forEach(item => {
-        if (!map[item.productId]) map[item.productId] = { name: item.name, qty: 0, revenue: 0 }
-        map[item.productId].qty += item.qty
-        map[item.productId].revenue += item.subtotal
-      })
-    })
+    const map = {};
+    this.sales.forEach((sale) => {
+      if (Array.isArray(sale.items)) {
+        sale.items.forEach((item) => {
+          const key = item.productId || item.name;
+          if (!map[key]) map[key] = { name: item.name, qty: 0, revenue: 0 };
+          map[key].qty += Number(item.qty) || 0;
+          map[key].revenue += Number(item.subtotal) || 0;
+        });
+      }
+    });
     return Object.entries(map)
-      .map(([id, v]) => ({ productId: +id, ...v }))
+      .map(([id, v]) => ({ productId: id, ...v }))
       .sort((a, b) => b.qty - a.qty)
-      .slice(0, 5)
+      .slice(0, 5);
   },
-  resetAllDataToZero() {
-    this.products.forEach(p => {
-      p.stock = 0
-      p.warehouseStock = 0
-      p.totalSold = 0
-    })
-    this.clients.forEach(c => {
-      c.totalBought = 0
-    })
-    this.sales.splice(0)
-    this.debts.splice(0)
-    this.pendingSales.splice(0)
 
-    this.saveProducts()
-    this.saveClients()
-    this.saveSales()
-    this.saveDebts()
-    this.savePendingSales()
-    localStorage.setItem('trueno_initialized', '1')
-  },
   getClientSales(clientId) {
-    return this.sales.filter(s => s.clientId === clientId)
+    return this.sales.filter((s) => s.clientId === clientId || s.clientRef === clientId);
   },
   getClientDebts(clientId) {
-    return this.debts.filter(d => d.clientId === clientId)
+    return this.debts.filter((d) => d.clientId === clientId || d.clientRef === clientId);
   },
-})
+});
 
-// Ensure demo products have stock if all products are 0
-if (store.products.length > 0 && store.products.every(p => p.stock === 0 && (p.warehouseStock || 0) === 0)) {
-  const defaultStocks = [12, 10, 15, 3, 5, 20, 7, 14]
-  const defaultWarehouse = [8, 6, 10, 5, 4, 15, 5, 10]
-  store.products.forEach((p, i) => {
-    p.stock = defaultStocks[i % defaultStocks.length]
-    p.warehouseStock = defaultWarehouse[i % defaultWarehouse.length]
-  })
-  store.saveProducts()
-}
-
-// Update debt statuses on load
-store.updateDebtStatuses()
-
-export default store
+export default store;

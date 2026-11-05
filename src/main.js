@@ -1,18 +1,20 @@
-import { createApp } from 'vue'
-import { createRouter, createWebHashHistory } from 'vue-router'
-import App from './App.vue'
-import './style.css'
-import AuthService from './services/auth.service.js'
+import { createApp } from 'vue';
+import { createRouter, createWebHashHistory } from 'vue-router';
+import { createPinia } from 'pinia';
+import App from './App.vue';
+import './style.css';
+import AuthService from './services/auth.service.js';
+import store from './stores/store.js';
 
 // Views
-import Login from './views/Login.vue'
-import Dashboard from './views/Dashboard.vue'
-import Inventory from './views/Inventory.vue'
-import Sales from './views/Sales.vue'
-import Clients from './views/Clients.vue'
-import Debts from './views/Debts.vue'
-import SalesHistory from './views/SalesHistory.vue'
-import Settings from './views/Settings.vue'
+import Login from './views/Login.vue';
+import Dashboard from './views/Dashboard.vue';
+import Inventory from './views/Inventory.vue';
+import Sales from './views/Sales.vue';
+import Clients from './views/Clients.vue';
+import Debts from './views/Debts.vue';
+import SalesHistory from './views/SalesHistory.vue';
+import Settings from './views/Settings.vue';
 
 const routes = [
   { path: '/login', component: Login, meta: { title: 'Iniciar Sesión', requiresAuth: false } },
@@ -23,19 +25,19 @@ const routes = [
   { path: '/deudas', component: Debts, meta: { title: 'Deudas', requiresAuth: true } },
   { path: '/historial', component: SalesHistory, meta: { title: 'Historial de Ventas', requiresAuth: true } },
   { path: '/configuracion', component: Settings, meta: { title: 'Configuración', requiresAuth: true } },
-  { path: '/:pathMatch(.*)*', redirect: '/' }
-]
+  { path: '/:pathMatch(.*)*', redirect: '/' },
+];
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes,
-})
+});
 
 // Navigation Guard for Secure Route Protection
 router.beforeEach(async (to, from, next) => {
   document.title = to.meta?.title ? `${to.meta.title} — Trueno 219` : 'Trueno 219';
 
-  const requiresAuth = to.matched.some(record => record.meta.requiresAuth !== false);
+  const requiresAuth = to.matched.some((record) => record.meta.requiresAuth !== false);
   const token = AuthService.getToken();
 
   if (!requiresAuth) {
@@ -57,21 +59,30 @@ router.beforeEach(async (to, from, next) => {
       AuthService.clearSession();
       return next({ path: '/login', query: { redirect: to.fullPath } });
     }
+
+    // Initialize/sync store if authenticated and not yet initialized
+    if (!store.isInitialized) {
+      store.init();
+    }
+
     return next();
   } catch (err) {
     if (err.status === 401 || err.status === 403) {
       AuthService.clearSession();
       return next({ path: '/login', query: { redirect: to.fullPath } });
     }
-    // In case of backend connection loss, allow if cached profile exists
+    // In case of backend temporary offline, allow if cached profile exists
     const cachedUser = AuthService.getUser();
     if (cachedUser && cachedUser.is_active !== false) {
       return next();
     }
     return next({ path: '/login', query: { redirect: to.fullPath } });
   }
-})
+});
 
-const app = createApp(App)
-app.use(router)
-app.mount('#app')
+const app = createApp(App);
+const pinia = createPinia();
+
+app.use(pinia);
+app.use(router);
+app.mount('#app');

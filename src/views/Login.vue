@@ -95,6 +95,7 @@
 import { ref } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import AuthService from '../services/auth.service.js';
+import store from '../stores/store.js';
 import { Mail, Lock, LogIn, AlertCircle, Eye, EyeOff } from '@lucide/vue';
 
 const router = useRouter();
@@ -113,6 +114,7 @@ const handleLogin = async () => {
 
   try {
     await AuthService.login(email.value.trim(), password.value);
+    await store.init();
     const redirectPath = route.query.redirect || '/';
     router.push(redirectPath);
   } catch (err) {

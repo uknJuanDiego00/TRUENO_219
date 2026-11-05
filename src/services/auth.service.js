@@ -1,5 +1,5 @@
 // =====================================================================
-// TRUENO 219 - Frontend Authentication Service
+// TRUENO 219 - Frontend Authentication Service (Axios Powered)
 // Manages login, logout, session persistence and backend validation
 // =====================================================================
 
@@ -11,11 +11,12 @@ export const AuthService = {
    */
   async login(email, password) {
     const res = await ApiClient.post('/auth/login', { email, password });
-    if (res.data?.token) {
-      localStorage.setItem('trueno_token', res.data.token);
-      localStorage.setItem('trueno_user', JSON.stringify(res.data.user));
+    const payload = res.data || res;
+    if (payload?.token) {
+      localStorage.setItem('trueno_token', payload.token);
+      localStorage.setItem('trueno_user', JSON.stringify(payload.user));
     }
-    return res.data;
+    return payload;
   },
 
   /**
@@ -27,9 +28,10 @@ export const AuthService = {
 
     try {
       const res = await ApiClient.get('/auth/me');
-      if (res.data?.user) {
-        localStorage.setItem('trueno_user', JSON.stringify(res.data.user));
-        return res.data.user;
+      const payload = res.data || res;
+      if (payload?.user) {
+        localStorage.setItem('trueno_user', JSON.stringify(payload.user));
+        return payload.user;
       }
       return null;
     } catch (err) {
@@ -71,8 +73,7 @@ export const AuthService = {
 
   isAuthenticated() {
     return Boolean(this.getToken());
-  }
+  },
 };
 
 export default AuthService;
-

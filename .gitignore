@@ -1,3 +1,6 @@
 node_modules/
 dist/
-vercel.json
+.env
+.env*.local
+.DS_Store
+Thumbs.db
