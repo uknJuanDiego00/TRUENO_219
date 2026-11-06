@@ -933,12 +933,13 @@ const saleSuccessModal = ref(false)
 const completedSale = ref(null)
 
 // Métodos de Pago
+// IMPORTANTE: Los IDs deben coincidir EXACTAMENTE con el enum del modelo Sale.js en el backend:
+// ['Efectivo', 'Nequi', 'Crédito', 'Transferencia', 'Otro']
 const paymentMethods = [
   { id: 'Efectivo', name: 'Efectivo', icon: Banknote },
-  { id: 'Nequi', name: 'Nequi', icon: Smartphone },
-  { id: 'Daviplata', name: 'Daviplata', icon: Smartphone },
+  { id: 'Nequi', name: 'Nequi / Daviplata', icon: Smartphone },
   { id: 'Transferencia', name: 'Bancolombia/Transf.', icon: Building2 },
-  { id: 'Tarjeta', name: 'Datáfono / Tarjeta', icon: CreditCard },
+  { id: 'Otro', name: 'Datáfono / Tarjeta', icon: CreditCard },
   { id: 'Crédito', name: 'Venta a Crédito', icon: Clock },
 ]
 
@@ -1446,7 +1447,15 @@ async function saveQuickClient() {
 }
 
 // ================= CONFIRMAR VENTA =================
+// Guard para evitar doble envío
+let _saleSubmitting = false
+
 async function submitSale() {
+  if (_saleSubmitting) {
+    store.notify('La venta ya se está procesando, por favor espera...', 'warning')
+    return
+  }
+
   if (cart.value.length === 0) {
     store.notify('Agrega productos al carrito antes de confirmar', 'warning')
     return
@@ -1469,29 +1478,62 @@ async function submitSale() {
     }
   }
 
+  _saleSubmitting = true
+
+  try {
   const client = selectedClientId.value ? store.getClientById(Number(selectedClientId.value)) : null
   const isCredit = selectedPaymentMethod.value === 'Crédito'
   const currentInterest = isCredit ? Math.max(0, Math.min(100, Number(interestRate.value) || 0)) : 0
-  const effectiveTotal = isCredit && currentInterest > 0 ? totalWithInterest.value : cartTotal.value
+
+  // Subtotal: suma de todos los items (precio × cantidad, antes de descuento y mano de obra)
+  const computedSubtotal = cart.value.reduce((sum, i) => sum + (Number(i.subtotal) || 0), 0)
+  const computedLaborCost = Number(laborCost.value) || 0
+  const computedDiscount = Number(discountAmount.value) || 0
+
+  // baseTotal: subtotal + mano de obra - descuento (antes de interés)
+  const computedBaseTotal = Math.max(0, computedSubtotal + computedLaborCost - computedDiscount)
+
+  // interestAmount calculado en frontend para consistencia
+  const computedInterestAmount = isCredit && currentInterest > 0
+    ? Math.round(computedBaseTotal * currentInterest / 100)
+    : 0
+
+  // total final enviado al backend
+  const effectiveTotal = computedBaseTotal + computedInterestAmount
   const paidAmount = isCredit ? Math.max(0, Number(creditAdvance.value) || 0) : effectiveTotal
+
+  // Obtener el _id real del MongoDB para el cliente
+  const clientMongoId = client ? (client._id || null) : null
+  const clientNumericId = client ? (client.id || client.originalId || null) : null
 
   const saleData = {
     items: cart.value.map(i => ({
+      // Enviar tanto productId numérico como productRef (_id de MongoDB) si está disponible
       productId: i.productId,
+      productRef: (() => {
+        const prod = store.getProductById(i.productId)
+        return prod ? (prod._id || null) : null
+      })(),
       name: i.name,
-      price: i.price,
-      qty: i.qty,
-      subtotal: i.subtotal,
+      price: Number(i.price) || 0,
+      qty: Number(i.qty) || 1,
+      subtotal: Number(i.subtotal) || (Number(i.price) * Number(i.qty)),
     })),
-    clientId: client ? client.id : null,
-    clientName: client ? client.name : 'Cliente General',
+    // Identificadores del cliente
+    clientId: clientNumericId,
+    clientRef: clientMongoId,
+    clientName: client ? client.name : 'Consumidor Final',
     clientDocument: client ? (client.document || '') : '',
-    paymentMethod: selectedPaymentMethod.value,
-    total: cartTotal.value,
-    paid: paidAmount,
-    discount: Number(discountAmount.value) || 0,
-    laborCost: Number(laborCost.value) || 0,
+    // Totales calculados consistentemente
+    subtotal: computedSubtotal,
+    laborCost: computedLaborCost,
+    discount: computedDiscount,
+    baseTotal: computedBaseTotal,
     interestRate: currentInterest,
+    interestAmount: computedInterestAmount,
+    total: effectiveTotal,
+    paid: paidAmount,
+    paymentMethod: selectedPaymentMethod.value,
   }
 
   const registeredSale = await store.registerSale(saleData)
@@ -1501,13 +1543,22 @@ async function submitSale() {
       activePendingSaleId.value = null
     }
     clearActiveDraft()
-    const isAccumulated = !registeredSale.__isNew && registeredSale.items.length > cart.value.length
+    const isAccumulated = !registeredSale.__isNew && registeredSale.items && registeredSale.items.length > cart.value.length
+    const saleTotal = Number(registeredSale.total) || effectiveTotal
+    const salePaid = Number(registeredSale.paid) ?? paidAmount
     completedSale.value = {
       ...registeredSale,
-      debt: registeredSale.total - registeredSale.paid,
+      debt: Math.max(0, saleTotal - salePaid),
       isAccumulated,
     }
     saleSuccessModal.value = true
+    resetSaleForm()
+  }
+  } catch (err) {
+    console.error('[submitSale Error]', err)
+    // La notificación de error ya es manejada por store.registerSale
+  } finally {
+    _saleSubmitting = false
   }
 }
 
